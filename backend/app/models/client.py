@@ -14,6 +14,10 @@ class Client(Base):
     username = Column(String, unique=True, index=True, nullable=True) # For login
     email = Column(String, unique=True, index=True, nullable=True)    # For login/recovery
     password_hash = Column(String, nullable=True)                    # Bcrypt hash
+    failed_login_count = Column(Integer, default=0, server_default="0", nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+    tokens_valid_after = Column(DateTime, nullable=True)
+    must_change_password = Column(Boolean, default=False, server_default="false", nullable=False)
     general_settings = Column(JSON, default=dict) # { "currency": "JPY", "language": "ja" }
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -62,6 +66,7 @@ class ClientMfaSetting(Base):
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), unique=True, nullable=False, index=True)
     totp_secret_encrypted = Column(Text, nullable=True)
+    pending_totp_secret_encrypted = Column(Text, nullable=True)
     enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     enabled_at = Column(DateTime, nullable=True)
     last_verified_at = Column(DateTime, nullable=True)

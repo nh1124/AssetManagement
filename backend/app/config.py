@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_JWT_SECRET_KEY = "dev_jwt_secret_change_in_production_must_be_32_chars"
 DEV_ENCRYPTION_KEY = "YLM_ViHfrMWM0hUF3XoAMLLSaL4dVTy-JnHamAaIWTo="
+DEV_TOTP_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 DEV_MCP_JWT_SECRET = "change-me-to-a-secret-key-at-least-32-chars"
 
 

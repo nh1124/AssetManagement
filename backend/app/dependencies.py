@@ -1,3 +1,5 @@
+from datetime import timezone
+
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -58,6 +60,12 @@ async def get_current_client(
     # A token outlives the decision to deactivate its owner by up to a day.
     if client.is_active is False:
         raise HTTPException(status_code=401, detail=AUTHENTICATION_REQUIRED)
+
+    if client.tokens_valid_after is not None:
+        cutoff = int(client.tokens_valid_after.replace(tzinfo=timezone.utc).timestamp())
+        issued_at = payload.get("iat")
+        if not isinstance(issued_at, (int, float)) or issued_at < cutoff:
+            raise HTTPException(status_code=401, detail=AUTHENTICATION_REQUIRED)
 
     return client
 

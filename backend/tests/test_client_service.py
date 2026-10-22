@@ -151,7 +151,8 @@ def test_registration_keeps_password_hashing_in_the_router(db):
         ), db)
     hashing.assert_called_once_with(password)
     stored = db.query(models.Client).one()
-    assert result == {"message": "User registered successfully", "client_id": stored.id}
+    assert result["client_id"] == stored.id
+    assert result["next_step"] == "mfa_setup" and result["access_token"] is None
     assert (stored.name, stored.username, stored.email) == ("Alice", "alice", "alice@example.com")
     assert verify_password(password, stored.password_hash)
 

@@ -52,6 +52,7 @@ from .utils.observability import (
     setup_logging,
 )
 from .utils.password import verify_password
+from .services import mfa_service
 
 
 setup_logging()
@@ -228,6 +229,7 @@ async def startup_event():
 
         if settings.is_production:
             ensure_no_development_password(db)
+            mfa_service.ensure_no_development_totp(db)
         else:
             # 1. Ensure Default Client exists in development only.
             if not default_client:
@@ -255,6 +257,9 @@ async def startup_event():
                     default_client.username = "dev"
                     default_client.password_hash = hash_password("adminadmin")
                     db.commit()
+
+            if default_client.username == "dev":
+                mfa_service.ensure_development_mfa(db, default_client)
 
     finally:
         db.close()

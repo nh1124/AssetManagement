@@ -97,3 +97,38 @@ def test_the_exclusion_list_has_no_stale_entries():
 def test_every_carried_collection_is_a_real_table():
     unknown = sorted(set(DATA_COLLECTIONS) - _tables())
     assert not unknown, f"The backup format names tables that do not exist: {unknown}"
+
+
+def test_authentication_state_is_neither_exported_nor_imported():
+    from datetime import datetime, timedelta
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from app.routers.data_transfer import ImportPayload, import_client_data
+    from app.services.data_transfer_service import export_client
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine, autoflush=False) as db:
+        client = models.Client(name="owner", username="owner", failed_login_count=3,
+                               locked_until=datetime.utcnow() + timedelta(minutes=1),
+                               tokens_valid_after=datetime.utcnow(), must_change_password=True)
+        db.add(client)
+        db.flush()
+        setting = models.ClientMfaSetting(client_id=client.id, pending_totp_secret_encrypted="pending-secret")
+        db.add(setting)
+        db.commit()
+        fields = ("failed_login_count", "locked_until", "tokens_valid_after", "must_change_password")
+        before = {field: getattr(client, field) for field in fields}
+        document = export_client(db, client)
+        assert not set(fields) & document["client"].keys()
+        assert "client_mfa_settings" not in document["data"]
+        assert "client_recovery_codes" not in document["data"]
+        # A hand-edited client header cannot clear installation security state.
+        document["client"].update(failed_login_count=0, locked_until=None, tokens_valid_after=None,
+                                   must_change_password=False, pending_totp_secret_encrypted="injected")
+        import_client_data(ImportPayload(**document), db, client)
+        db.refresh(client)
+        db.refresh(setting)
+        assert {field: getattr(client, field) for field in fields} == before
+        assert setting.pending_totp_secret_encrypted == "pending-secret"
+    engine.dispose()

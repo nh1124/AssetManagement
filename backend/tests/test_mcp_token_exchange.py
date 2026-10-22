@@ -12,6 +12,7 @@ from backend.app import models
 from backend.app.config import settings
 from backend.app.database import Base
 from backend.app.routers import auth
+from backend.app.security import encrypt_key
 from backend.app.utils.jwt import decode_token
 from backend.app.utils.password import hash_password
 
@@ -22,7 +23,7 @@ def _session():
     return sessionmaker(autocommit=False, autoflush=False, bind=engine)()
 
 
-def _client(db, client_id: int, username: str):
+def _client(db, client_id: int, username: str, *, mfa_enabled: bool | None = True):
     client = models.Client(
         id=client_id,
         name=f"User {client_id}",
@@ -31,6 +32,11 @@ def _client(db, client_id: int, username: str):
         general_settings={},
     )
     db.add(client)
+    if mfa_enabled is not None:
+        db.add(models.ClientMfaSetting(
+            client_id=client_id, enabled=mfa_enabled,
+            totp_secret_encrypted=encrypt_key("JBSWY3DPEHPK3PXP"),
+        ))
     db.commit()
     db.refresh(client)
     return client
@@ -84,6 +90,23 @@ def test_mcp_token_exchange_accepts_local_https_issuer_variant() -> None:
 
         assert result["client_id"] == client.id
         assert result["username"] == "alice"
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("mfa_enabled", [None, False])
+def test_mcp_token_exchange_requires_enabled_mfa(mfa_enabled) -> None:
+    db = _session()
+    try:
+        client = _client(db, 1, "alice", mfa_enabled=mfa_enabled)
+        token = _mcp_token(username="alice", backend_client_id=client.id)
+
+        with pytest.raises(HTTPException) as error:
+            auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=token), db)
+
+        assert error.value.status_code == 401
+        assert error.value.detail == "MFA setup required"
+        assert error.value.detail.in_language("ja") == "先にアプリで認証アプリを設定してください。"
     finally:
         db.close()
 

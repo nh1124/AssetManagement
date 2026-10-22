@@ -11,7 +11,7 @@ from app.database import Base
 
 # WP23: 積立設定 records carry a kind, a destination account (口座振替), a schedule and the shortage choice.
 # §8-11: scenario_assumption_periods (期間ごとの前提). WP27: monthly_actions gone, registry_entries.records_transactions.
-EXPECTED_METADATA_SHA256 = "ff1b72a2a90ef115903982ff65580b25bdcc1aff7852154f3df0d7b0aee24828"
+EXPECTED_METADATA_SHA256 = "17ee5e9fc208d0db4ce70066dbde73439151cebaa4cf65e81198b6eef14b21db"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -92,7 +92,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 34
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 385
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 390
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

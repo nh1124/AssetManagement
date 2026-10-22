@@ -2,7 +2,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Literal, Optional
 from sqlalchemy.exc import IntegrityError
 from .. import models
 from ..database import get_db
@@ -37,10 +37,12 @@ class ProfileUpdate(BaseModel):
 
 class AuthResponse(BaseModel):
     access_token: Optional[str] = None
-    token_type: str = "bearer"
+    token_type: Literal["step", "bearer"] = "bearer"
     client_id: int
     name: str
-    mfa_required: bool = False
+    next_step: Optional[Literal["password_change", "mfa_setup", "mfa"]] = None
+    step_token: Optional[str] = None
+    mfa_required: Optional[bool] = None
     mfa_token: Optional[str] = None
 
 
@@ -50,8 +52,16 @@ class MfaLoginVerifyRequest(BaseModel):
     recovery_code: Optional[str] = None
 
 
-class MfaStartRequest(BaseModel):
-    current_password: str
+class StepRequest(BaseModel):
+    step_token: str
+
+
+class PasswordChangeRequest(StepRequest):
+    new_password: str
+
+
+class EnrollVerifyRequest(StepRequest):
+    code: str
 
 
 class MfaSetupStartResponse(BaseModel):
@@ -65,6 +75,18 @@ class MfaSetupVerifyRequest(BaseModel):
 
 class MfaRecoveryCodesResponse(BaseModel):
     recovery_codes: list[str]
+
+
+class EnrollResponse(MfaRecoveryCodesResponse):
+    access_token: str
+    token_type: str = "bearer"
+    client_id: int
+    name: str
+
+
+class MfaReplacementResponse(MfaRecoveryCodesResponse):
+    access_token: str
+    token_type: str = "bearer"
 
 
 class MfaFactorRequest(BaseModel):
@@ -100,6 +122,7 @@ def _auth_response(client: models.Client) -> dict:
         "client_id": client.id,
         "name": client.name,
         "mfa_required": False,
+        "mfa_token": None,
     }
 
 
@@ -113,43 +136,103 @@ def _client_from_typed_token(db: Session, token: str, expected_type: str) -> mod
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_TOKEN)
     return client
 
-@router.post("/login", response_model=AuthResponse)
+LOCKED = Message("Too many attempts. Try again later.", ja="試行が多すぎます。しばらくしてからもう一度お試しください。")
+INVALID_MFA = Message("Invalid MFA code", ja="認証コードが正しくありません。")
+
+
+def _ensure_unlocked(client: models.Client) -> None:
+    if client_service.is_locked(client):
+        raise HTTPException(status_code=429, detail=LOCKED)
+
+
+def _failed(db: Session, client: models.Client, detail=INVALID_MFA, status_code: int = 401) -> None:
+    client_service.record_auth_failure(db, client)
+    _ensure_unlocked(client)
+    raise HTTPException(status_code=status_code, detail=detail)
+
+
+def _next_step(db: Session, client: models.Client) -> dict:
+    if client.must_change_password:
+        step = "password_change"
+    elif not mfa_service.mfa_enabled(db, client.id):
+        step = "mfa_setup"
+    else:
+        step = "mfa"
+    token = create_typed_token(
+        user_id=client.id, username=client.name, token_type=step,
+        expires_delta=timedelta(minutes=5 if step == "mfa" else 10),
+    )
+    result = {
+        "access_token": None, "token_type": "step", "client_id": client.id,
+        "name": client.name, "next_step": step, "step_token": token,
+    }
+    if step == "mfa":
+        result.update(mfa_required=True, mfa_token=token)
+    return result
+
+
+def _step_client(db: Session, token: str, step: str) -> models.Client:
+    client = _client_from_typed_token(db, token, step)
+    _ensure_unlocked(client)
+    # Completed stages cannot be replayed to reset an enrolled factor or skip a required password change.
+    enabled = mfa_service.mfa_enabled(db, client.id)
+    if (step == "password_change" and not client.must_change_password
+            or step != "password_change" and client.must_change_password
+            or step == "mfa_setup" and enabled
+            or step == "mfa" and not enabled):
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN)
+    return client
+
+
+@router.post("/login", response_model=AuthResponse, response_model_exclude_unset=True)
 def login(req: LoginRequest, db: Session = Depends(get_db)):
-    """Authenticate and return JWT token. Pattern from VisionArk."""
     client = client_service.get_by_username(db, req.username.lower(), active_only=True)
-    
-    if not client or not verify_password(req.password, client.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=Message("Invalid username or password", ja="ユーザー名またはパスワードが正しくありません。")
-        )
-    
-    mfa_setting = mfa_service.get_mfa_setting(db, client)
-    if mfa_setting and mfa_setting.enabled:
-        mfa_token = create_typed_token(
-            user_id=client.id,
-            username=client.name,
-            token_type="mfa",
-            expires_delta=timedelta(minutes=5),
-        )
-        return {
-            "access_token": None,
-            "token_type": "mfa",
-            "client_id": client.id,
-            "name": client.name,
-            "mfa_required": True,
-            "mfa_token": mfa_token,
-        }
-
-    return _auth_response(client)
+    invalid = Message("Invalid username or password", ja="ユーザー名またはパスワードが正しくありません。")
+    if not client:
+        raise HTTPException(status_code=401, detail=invalid)
+    _ensure_unlocked(client)
+    if not verify_password(req.password, client.password_hash or ""):
+        _failed(db, client, invalid)
+    client_service.record_auth_success(db, client)
+    return _next_step(db, client)
 
 
-@router.post("/mfa/login/verify", response_model=AuthResponse)
+@router.post("/password-change", response_model=AuthResponse, response_model_exclude_unset=True)
+def change_password(req: PasswordChangeRequest, db: Session = Depends(get_db)):
+    client = _step_client(db, req.step_token, "password_change")
+    if len(req.new_password) < 8:
+        raise HTTPException(status_code=400, detail=Message("Password must be at least 8 characters", ja="パスワードは8文字以上にしてください。"))
+    if verify_password(req.new_password, client.password_hash or ""):
+        raise HTTPException(status_code=400, detail=Message("New password must differ from the current password", ja="現在とは異なるパスワードを指定してください。"))
+    client_service.change_password(db, client, hash_password(req.new_password))
+    return _next_step(db, client)
+
+
+@router.post("/enroll/start", response_model=MfaSetupStartResponse)
+def start_enrollment(req: StepRequest, db: Session = Depends(get_db)):
+    client = _step_client(db, req.step_token, "mfa_setup")
+    result = mfa_service.start_totp_setup(db, client)
+    client_service.record_auth_success(db, client)
+    return result
+
+
+@router.post("/enroll/verify", response_model=EnrollResponse)
+def verify_enrollment(req: EnrollVerifyRequest, db: Session = Depends(get_db)):
+    client = _step_client(db, req.step_token, "mfa_setup")
+    try:
+        codes = mfa_service.verify_totp_setup(db, client, req.code)
+    except ValueError as exc:
+        _failed(db, client, message_of(exc), status_code=400)
+    client_service.record_auth_success(db, client)
+    return {"recovery_codes": codes, **_auth_response(client)}
+
+
+@router.post("/mfa/login/verify", response_model=AuthResponse, response_model_exclude_unset=True)
 def verify_mfa_login(req: MfaLoginVerifyRequest, db: Session = Depends(get_db)):
-    client = _client_from_typed_token(db, req.mfa_token, "mfa")
+    client = _step_client(db, req.mfa_token, "mfa")
     if not mfa_service.verify_mfa_factor(db, client, code=req.code, recovery_code=req.recovery_code):
-        # TODO(P1-002): connect MFA failure to audit log service.
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Message("Invalid MFA code", ja="認証コードが正しくありません。"))
+        _failed(db, client)
+    client_service.record_auth_success(db, client)
     return _auth_response(client)
 
 
@@ -173,6 +256,9 @@ def exchange_mcp_token(req: McpTokenExchangeRequest, db: Session = Depends(get_d
     if not client or (username and (client.username or "").lower() != username):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="MCP subject is not a valid user")
 
+    if not mfa_service.mfa_enabled(db, client.id):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Message("MFA setup required", ja="先にアプリで認証アプリを設定してください。"))
+
     return {
         "access_token": create_typed_token(
             user_id=client.id,
@@ -187,7 +273,7 @@ def exchange_mcp_token(req: McpTokenExchangeRequest, db: Session = Depends(get_d
         "mcp_client_id": str(payload.get("client_id") or ""),
     }
 
-@router.post("/register")
+@router.post("/register", response_model=AuthResponse, response_model_exclude_unset=True)
 def register(req: RegisterRequest, db: Session = Depends(get_db)):
     """Create a new client with login credentials."""
     username = req.username.strip().lower()
@@ -216,7 +302,7 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     except IntegrityError:
         raise HTTPException(status_code=400, detail=Message("Unable to register with provided credentials", ja="入力した内容では登録できませんでした。"))
 
-    return {"message": "User registered successfully", "client_id": new_client.id}
+    return _next_step(db, new_client)
 
 
 @router.get("/mfa/status")
@@ -227,49 +313,35 @@ def get_mfa_status(
     return mfa_service.mfa_status(db, current_client)
 
 
-@router.post("/mfa/setup/start", response_model=MfaSetupStartResponse)
-def start_mfa_setup(
-    req: MfaStartRequest,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    if not verify_password(req.current_password, current_client.password_hash or ""):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Message("Invalid password", ja="パスワードが正しくありません。"))
-    return mfa_service.start_totp_setup(db, current_client)
-
-
-@router.post("/mfa/setup/verify", response_model=MfaRecoveryCodesResponse)
-def verify_mfa_setup(
-    req: MfaSetupVerifyRequest,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    try:
-        codes = mfa_service.verify_totp_setup(db, current_client, req.code)
-    except ValueError as exc:
-        # TODO(P1-002): connect MFA setup failures to audit log service.
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message_of(exc))
-    return {"recovery_codes": codes}
-
-
-@router.post("/mfa/disable")
-def disable_mfa(
+@router.post("/mfa/replace/start", response_model=MfaSetupStartResponse)
+def start_mfa_replacement(
     req: MfaFactorRequest,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    if not mfa_service.verify_reauth_factor(
-        db,
-        current_client,
-        current_password=req.current_password,
-        code=req.code,
-        recovery_code=req.recovery_code,
-    ):
-        # TODO(P1-002): connect MFA disable failures to audit log service.
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=REAUTHENTICATION_REQUIRED)
+    _ensure_unlocked(current_client)
+    if not mfa_service.verify_mfa_factor(db, current_client, code=req.code, recovery_code=req.recovery_code):
+        _failed(db, current_client)
+    result = mfa_service.start_totp_replacement(db, current_client)
+    client_service.record_auth_success(db, current_client)
+    return result
 
-    mfa_service.disable_mfa(db, current_client)
-    return {"message": "MFA disabled"}
+
+@router.post("/mfa/replace/verify", response_model=MfaReplacementResponse)
+def verify_mfa_replacement(
+    req: MfaSetupVerifyRequest,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    _ensure_unlocked(current_client)
+    try:
+        codes = mfa_service.verify_totp_replacement(db, current_client, req.code)
+    except ValueError as exc:
+        _failed(db, current_client, message_of(exc))
+    client_service.revoke_tokens(db, current_client, commit=False)
+    client_service.record_auth_success(db, current_client)
+    return {"recovery_codes": codes, "access_token": create_access_token(current_client.id, current_client.name),
+            "token_type": "bearer"}
 
 
 @router.post("/mfa/recovery-codes/regenerate", response_model=MfaRecoveryCodesResponse)
@@ -278,19 +350,11 @@ def regenerate_recovery_codes(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    if not mfa_service.verify_reauth_factor(
-        db,
-        current_client,
-        current_password=req.current_password,
-        code=req.code,
-        recovery_code=req.recovery_code,
-    ):
-        # TODO(P1-002): connect recovery-code regeneration failures to audit log service.
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=REAUTHENTICATION_REQUIRED)
+    _ensure_unlocked(current_client)
+    if not mfa_service.verify_mfa_factor(db, current_client, code=req.code, recovery_code=req.recovery_code):
+        _failed(db, current_client, REAUTHENTICATION_REQUIRED)
+    client_service.record_auth_success(db, current_client)
 
-    setting = mfa_service.get_mfa_setting(db, current_client)
-    if not setting or not setting.enabled:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=Message("MFA is not enabled", ja="MFAは有効になっていません。"))
     return {"recovery_codes": mfa_service.regenerate_recovery_codes(db, current_client)}
 
 
@@ -313,11 +377,13 @@ def reauth(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
+    _ensure_unlocked(current_client)
     # Step-up is MFA only: a password never stands in for the second factor.
     if not mfa_service.mfa_enabled(db, current_client.id):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=Message("MFA setup required", ja="先にMFAを設定してください。"))
     if not mfa_service.verify_mfa_factor(db, current_client, code=req.code, recovery_code=req.recovery_code):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=REAUTHENTICATION_REQUIRED)
+        _failed(db, current_client, REAUTHENTICATION_REQUIRED)
+    client_service.record_auth_success(db, current_client)
     return _issue_step_up_token(current_client)
 
 
@@ -353,4 +419,7 @@ def update_profile(
             req.current_password and verify_password(req.current_password, current_client.password_hash or "")):
         raise HTTPException(status_code=403, detail=Message("現在のパスワードが正しくありません。", en="The current password is incorrect."))
     client_service.update_profile(db, current_client, fields)
-    return {"message": "Profile updated successfully"}
+    response = {"message": "Profile updated successfully"}
+    if "password_hash" in fields:
+        response["access_token"] = create_access_token(current_client.id, current_client.name)
+    return response
