@@ -12,4 +12,7 @@ exec_options=()
 if [ ! -t 0 ]; then
   exec_options+=(-T)
 fi
+# The audit log records who ran the command (cli:<host user>); inside the container
+# the process user is the container's own.
+exec_options+=(-e "AM_CLI_OPERATOR=$(id -un)")
 exec docker compose exec "${exec_options[@]}" admin python -m app.admin.cli "$@"

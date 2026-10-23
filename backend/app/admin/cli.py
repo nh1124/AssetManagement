@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
+import re
 import sys
 
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +16,20 @@ from ..domain.messages import message_of
 from ..services import admin_audit_service as audit, admin_auth_service as admins
 from ..services import client_service as clients, system_settings_service as settings
 from ..workflows import admin_account_workflow as workflow
+
+
+OPERATOR = re.compile(r"[A-Za-z0-9._@-]{1,64}")
+
+
+def _actor() -> str:
+    """The audit actor: cli:<who ran it on the host>.
+
+    Inside the admin container getpass.getuser() is the container's own user, so
+    ops/bin/am-admin.sh passes the host user as AM_CLI_OPERATOR. Anything outside
+    a plain user-name alphabet falls back to the process user.
+    """
+    operator = os.environ.get("AM_CLI_OPERATOR", "")
+    return "cli:" + (operator if OPERATOR.fullmatch(operator) else getpass.getuser())
 
 
 def _parser():
@@ -197,7 +213,7 @@ def main(argv=None, *, db=None, input_fn=input, getpass_fn=getpass.getpass, out=
         from ..database import SessionLocal
         db = SessionLocal()
     try:
-        result = _dispatch(args, db, "cli:" + getpass.getuser(), input_fn, getpass_fn, emit)
+        result = _dispatch(args, db, _actor(), input_fn, getpass_fn, emit)
         emit(result)
         return 0
     except DomainError as exc:

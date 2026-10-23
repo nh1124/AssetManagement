@@ -204,6 +204,24 @@ def test_missing_targets_produce_readable_errors(db, argv):
     assert status == 1 and json.loads(output)["message"]
 
 
+def _last_actor(db):
+    return db.query(models.AdminAuditLog).order_by(models.AdminAuditLog.id.desc()).first().actor
+
+
+def test_audit_actor_is_the_host_operator_passed_by_am_admin(db, monkeypatch):
+    monkeypatch.setenv("AM_CLI_OPERATOR", "ops-user")
+    assert run(db, ["settings", "set", "registration_mode", "approval", "--yes"])[0] == 0
+    assert _last_actor(db) == "cli:ops-user"
+
+
+@pytest.mark.parametrize("value", ["", "two words", "x;rm -rf", "a" * 65, "名前"])
+def test_unsafe_or_missing_operator_falls_back_to_the_process_user(db, monkeypatch, value):
+    monkeypatch.setenv("AM_CLI_OPERATOR", value)
+    monkeypatch.setattr("app.admin.cli.getpass.getuser", lambda: "container-user")
+    assert run(db, ["settings", "set", "registration_mode", "open", "--yes"])[0] == 0
+    assert _last_actor(db) == "cli:container-user"
+
+
 def test_table_output_contains_headers_and_rows(db):
     status, output, _ = run(db, ["client", "list"])
     assert status == 0 and "username" in output and "transaction_count" in output
