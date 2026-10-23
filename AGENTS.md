@@ -4,10 +4,10 @@
 
 1. [CLAUDE.md](CLAUDE.md) — プロジェクト共通の原則（実データ保護・Journal 不変条件）
 2. [docs/README.md](docs/README.md) — 文書の構成と「何の正本はどれか」。`docs/specs/` が現行仕様、`docs/archive/` は旧仕様（仕様として読まない）
-3. [docs/agent_knowledge/README.md](docs/agent_knowledge/README.md) — 共通知識の索引
+3. [docs/agents/README.md](docs/agents/README.md) — AI 向けの共通知識の索引
 4. 実装タスクの場合: [docs/work/README.md](docs/work/README.md)（進め方）と [docs/work/STATUS.md](docs/work/STATUS.md)（進行中・残りの正本）
 5. MCP でデータ操作する場合: [.agents/skills/financeide-mcp/SKILL.md](.agents/skills/financeide-mcp/SKILL.md) — MCP 操作の手順書
-6. データ入力代行の場合: [docs/agent_instruction/data_entry_agent_guide.md](docs/agent_instruction/data_entry_agent_guide.md)
+6. データ入力代行の場合: [docs/agents/data_entry_guide.md](docs/agents/data_entry_guide.md)
 
 ## 原則
 

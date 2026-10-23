@@ -3,10 +3,10 @@
 作業前に以下を読むこと:
 
 - [docs/README.md](docs/README.md) — 文書の構成と「何の正本はどれか」。`docs/specs/` が現行仕様、`docs/archive/` は旧仕様（仕様として読まない）
-- [docs/agent_knowledge/README.md](docs/agent_knowledge/README.md) — 共通知識の索引
+- [docs/agents/README.md](docs/agents/README.md) — AI 向けの共通知識の索引
   - `agent_behavior.md`: 協働で確認された判断基準（P/L 赤字・残高 ¥0 の誤読防止、Capsule 確認、報告フォーマット等）
   - `asset_management_system.md`: システム構成・Capsule の罠・登録ルール
-- データ入力代行（Transaction / Item / Journal 登録）のタスクは [docs/agent_instruction/data_entry_agent_guide.md](docs/agent_instruction/data_entry_agent_guide.md) に従う
+- データ入力代行（Transaction / Item / Journal 登録）のタスクは [docs/agents/data_entry_guide.md](docs/agents/data_entry_guide.md) に従う
 - MCP 経由のデータ操作は [.agents/skills/financeide-mcp/SKILL.md](.agents/skills/financeide-mcp/SKILL.md) に従う（codex / cowork 共通。エントリポイントは [AGENTS.md](AGENTS.md)）
 - 実装タスクの状態は [docs/work/STATUS.md](docs/work/STATUS.md) が正本、進め方は [docs/work/README.md](docs/work/README.md)
 

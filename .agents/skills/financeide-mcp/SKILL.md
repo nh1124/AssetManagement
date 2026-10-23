@@ -34,7 +34,7 @@ FinanceIDE MCP（backend `/` FastAPI の facade）を通じてユーザーの実
    - 迷ったら `accounts_list` と `validate_transaction_payload`。科目側の指針は MCP リソース
      `asset-management://guide/accounting-rules`（`help_choose_transaction_type` は廃止）。
    - 負債が毎月締めで精算されるか（`liability_kind='card'`）、独自の返済スケジュールか（`'loan'`）は科目の属性。
-3. **Transaction の不変条件**: Transaction には必ず JournalEntry が伴う。**2 行以上**で、借方合計 = 貸方合計 = `amount`。MCP / API 経由なら backend が検算する。**DB への直接の書き込みは禁止**（入力代行の手順は `docs/agent_instruction/data_entry_agent_guide.md`）。
+3. **Transaction の不変条件**: Transaction には必ず JournalEntry が伴う。**2 行以上**で、借方合計 = 貸方合計 = `amount`。MCP / API 経由なら backend が検算する。**DB への直接の書き込みは禁止**（入力代行の手順は `docs/agents/data_entry_guide.md`）。
 4. **1 回の支払いが複数科目に分かれる場合は `legs` を使う**（取引を 2 件に分けない）。立替込みの食事なら、貸方にカード 1 本、借方に 食費 と 立替科目。
    - 誰への立替かは**勘定科目で表す**（`立替 / 友人A` を asset 科目として作る）。貸している額はその科目の残高そのもので、回収は その科目 → 現金 の Transfer 1 本。
    - `amount` は支払総額のまま。各レグはその内訳で、合計が `amount` に一致しないと拒否される。
@@ -76,7 +76,7 @@ FinanceIDE MCP（backend `/` FastAPI の facade）を通じてユーザーの実
 ## 関連資料
 
 - [references/tool-catalog.md](references/tool-catalog.md) — ツール分類と契約
-- `docs/agent_instruction/data_entry_agent_guide.md` — 取引・物品の登録代行の手順（物品の項目と予算での扱い）
-- `docs/agent_knowledge/asset_management_system.md` — システム構成・取り置き（Capsule）の読み方
+- `docs/agents/data_entry_guide.md` — 取引・物品の登録代行の手順（物品の項目と予算での扱い）
+- `docs/agents/asset_management_system.md` — システム構成・取り置き（Capsule）の読み方
 - `docs/specs/system_overview.md` — システムの今の全体像
-- `docs/agent_knowledge/agent_behavior.md` — 協働で確認された判断基準
+- `docs/agents/agent_behavior.md` — 協働で確認された判断基準
