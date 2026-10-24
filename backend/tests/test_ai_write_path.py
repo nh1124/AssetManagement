@@ -12,7 +12,7 @@ import pytest
 from backend.app import models, schemas
 from backend.app.domain.money import Money
 from backend.app.routers.transactions import approve_proposal as approve_proposal_endpoint
-from backend.app.services.ai_policy_service import replace_client_policies
+from backend.app.services.ai_policy_service import set_operation_mode
 from backend.app.workflows.ai_change_request_workflow import (
     apply_change_request,
     approve_change_request,
@@ -33,7 +33,7 @@ def _payload(cash, destination):
     }
 
 
-def _approved_request(db, payload, *, risk="medium"):
+def _approved_request(db, payload):
     request = create_change_request(
         db,
         1,
@@ -41,11 +41,14 @@ def _approved_request(db, payload, *, risk="medium"):
         schemas.AiChangeRequestCreate(
             resource="transactions",
             action="create",
-            risk=risk,
             input_payload=payload,
         ),
     )
-    return approve_change_request(db, 1, 1, request.id)
+    # Every approval is confirmed with the authenticator code (WP36).
+    if db.query(models.ClientMfaSetting).filter_by(client_id=1).first() is None:
+        db.add(models.ClientMfaSetting(client_id=1, enabled=True))
+        db.commit()
+    return approve_change_request(db, 1, 1, request.id, {"type": "step_up", "sub": "1"})
 
 
 def _capsule_rule(db, cash, destination):
@@ -123,15 +126,10 @@ def test_queued_proposal_preserves_requested_amount_and_resolved_legs(posting, e
     assert proposal.currency == payload["currency"]
 
 
-def test_allow_execute_at_request_risk_posts_directly_without_ai_proposal(posting):
+def test_allowing_the_ai_to_record_posts_directly_without_ai_proposal(posting):
     db, cash, destination, _ = posting
-    request = _approved_request(db, _payload(cash, destination), risk="high")
-    replace_client_policies(db, 1, [{
-        "resource": "transactions",
-        "action": "create",
-        "risk": "high",
-        "mode": "allow_execute",
-    }])
+    request = _approved_request(db, _payload(cash, destination))
+    set_operation_mode(db, 1, "transactions.create", "allow", None)
 
     applied = apply_change_request(db, 1, 1, request.id)
 

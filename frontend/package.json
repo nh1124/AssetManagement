@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test:auth-token-persistence": "node scripts/auth-token-persistence.mjs",
-    "test:ai-policy-rules": "node scripts/ai-policy-rules.mjs",
+    "test:ai-operations": "node scripts/ai-operations.mjs",
     "preview": "vite preview",
     "build:admin": "tsc -b && vite build --config vite.admin.config.ts",
     "dev:admin": "vite --configLoader runner --config vite.admin.config.ts",

@@ -258,7 +258,7 @@
     "body": "object",
     "source": "src/tools/ai-change-requests.ts",
     "path_fragment": "/ai/change-requests",
-    "allowed_fields": ["resource", "action", "risk", "target_ref", "input_payload", "idempotency_key", "status"],
+    "allowed_fields": ["resource", "action", "target_ref", "input_payload", "idempotency_key", "status"],
     "required_fields": ["resource", "action"]
   },
   {

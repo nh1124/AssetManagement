@@ -46,10 +46,9 @@ function RequestList({ status, currency }: { status: Status; currency: string })
     const inFlight = useRef(false);
     const run = async (request: AiChangeRequest, action: Action) => {
         if (inFlight.current || loading || error) return;
-        // Critical requests need step-up too; never approve them without a token.
-        const needsMfa = request.requires_mfa || request.risk === 'critical';
+        // Every approval is confirmed with the authenticator code (WP36).
         const factor = (factors[request.id] ?? '').trim();
-        if (action === 'approve' && (request.status !== 'pending' || (needsMfa && !factor))) return;
+        if (action === 'approve' && (request.status !== 'pending' || !factor)) return;
         if (action === 'apply' && request.status !== 'approved') return;
         if (action === 'reject' && !REJECTABLE.includes(request.status)) return;
         if (action === 'rebuild' && request.status !== 'failed') return;
@@ -57,7 +56,7 @@ function RequestList({ status, currency }: { status: Status; currency: string })
         setBusy({ id: request.id, action });
         try {
             let token: string | undefined;
-            if (action === 'approve' && needsMfa) {
+            if (action === 'approve') {
                 try {
                     token = (await reauth(stepUpFactor(factor))).step_up_token;
                 } catch {
@@ -85,8 +84,7 @@ function RequestList({ status, currency }: { status: Status; currency: string })
     if (!data) return <Skeleton lines={2} />;
     if (!data.length) return <Empty icon={<Bot size={28} aria-hidden />} title={tr(`${STATUS_LABELS[status]}の変更はありません`, `No ${STATUS_LABELS[status].toLowerCase()} changes`)} />;
     return <>{data.map((request) => {
-        const needsMfa = request.requires_mfa || request.risk === 'critical';
-        const stepUp = needsMfa && request.status === 'pending';
+        const stepUp = request.status === 'pending';
         const disabled = loading || busy !== null;
         const label = (action: Action) => busy?.id === request.id && busy.action === action ? BUSY_LABELS[action] : ACTION_LABELS[action];
         return <article key={request.id} aria-busy={busy?.id === request.id} className="space-y-3 rounded-2xl bg-[var(--studio-surface)] p-4 shadow-[var(--mobile-shadow)]">

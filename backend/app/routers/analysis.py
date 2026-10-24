@@ -5,10 +5,9 @@ from datetime import date
 from typing import Optional
 from ..domain.messages import localize, message_of
 from ..database import get_db
-from ..dependencies import get_current_client, request_language, mcp_client_id
+from ..dependencies import get_current_client, request_language
 from .. import models, schemas
 from ..services import analysis_service, reconciliation_service
-from ..services.ai_policy_service import assert_direct_ledger_write_allowed
 from .transactions import _serialize_transaction
 from ..services.cache_service import get_or_set
 from ..services.reporting_service import (
@@ -205,11 +204,6 @@ def adjust_statement(
     current_client: models.Client = Depends(get_current_client),
     request: Request = None,
 ):
-    assert_direct_ledger_write_allowed(
-        db, current_client.id,
-        mcp_client_id=mcp_client_id(),
-        risk="medium",
-    )
     money = reconciliation_service.statement_money(db, current_client.id, payload.statement, payload.currency)
     transaction = reconciliation_service.post_adjustment(
         db, current_client.id, account_id, as_of=payload.as_of,

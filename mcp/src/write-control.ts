@@ -11,7 +11,6 @@ interface AiExecutionSettings {
 interface ChangeRequestInput {
   resource: string;
   action: string;
-  risk: "low" | "medium" | "high" | "critical";
   target_ref?: Record<string, unknown>;
   input_payload?: Record<string, unknown>;
 }

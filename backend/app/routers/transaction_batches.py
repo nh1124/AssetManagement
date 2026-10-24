@@ -3,9 +3,8 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..dependencies import get_current_client, mcp_client_id
+from ..dependencies import get_current_client
 from ..services import transaction_batch_service
-from ..services.ai_policy_service import assert_direct_ledger_write_allowed
 from ..workflows.transaction_batch_workflow import post_transaction_batch
 from ..services.journal_legs import primary_accounts
 
@@ -57,8 +56,6 @@ def create_transaction_batch(
     current_client: models.Client = Depends(get_current_client),
     request: Request = None,
 ):
-    # An AI writing a batch posts to the ledger directly, like a single transaction.
-    assert_direct_ledger_write_allowed(db, current_client.id, mcp_client_id=mcp_client_id())
     return _serialize_batch(post_transaction_batch(db, current_client.id, payload))
 
 

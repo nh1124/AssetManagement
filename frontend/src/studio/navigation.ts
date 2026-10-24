@@ -17,6 +17,7 @@ import {
     Landmark,
     NotebookPen,
     PiggyBank,
+    Plug,
     Repeat2,
     ShoppingBasket,
     Sparkles,
@@ -137,6 +138,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
         collapsible: true,
         screens: [
             { path: 'automation/ai', label: 'screen.ai', icon: Sparkles, section: AUTOMATION },
+            { path: 'automation/connections', label: 'screen.connections', icon: Plug, section: AUTOMATION },
             { path: 'automation/approvals', label: 'screen.approvals', icon: Inbox, section: AUTOMATION },
             { path: 'automation/audit', label: 'screen.audit', icon: History, section: AUTOMATION },
         ],

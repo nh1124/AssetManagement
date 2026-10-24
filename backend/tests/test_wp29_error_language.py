@@ -183,15 +183,14 @@ def test_depreciation_reasons_follow_the_screen_language(studio, db, read):
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 DOMAIN_ERRORS = {"DomainError", "NotFound", "Invalid", "Conflict", "Refused", "BatchPostingError"}
 UNTRANSLATED: dict[str, int] = {
-    # MCP-only: the AI context reads, the AI write gate (a human's own write skips it),
-    # the MCP token exchange and transaction batches (no screen posts them).
+    # MCP-only: the AI context reads, the MCP token exchange and transaction
+    # batches (no screen posts them).
     "services/ai_context_service": 3,
-    "services/ai_policy_service": 1,
     "routers/auth": 3,
     "routers/transaction_batches": 1,
     "workflows/transaction_batch_workflow": 1,
-    # Change requests the AI drafts: an unsupported operation or a missing rate.
-    "workflows/ai_change_request_workflow": 2,
+    # Change requests the AI drafts: an unsupported operation.
+    "workflows/ai_change_request_workflow": 1,
     # Data import: the settings screen shows its own message for any failure.
     "services/data_transfer_service": 1,
     # Readiness probe.

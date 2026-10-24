@@ -44,7 +44,7 @@ export function registerAutoTransactionTools(server: McpServer): void {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (input) => {
     try {
-      if (await shouldCreateChangeRequest()) return await createChangeRequestResult({ resource: "auto_transactions", action: "create", risk: "medium", input_payload: input });
+      if (await shouldCreateChangeRequest()) return await createChangeRequestResult({ resource: "auto_transactions", action: "create", input_payload: input });
       const data = await api.post<unknown>("/auto-transactions/", input);
       return { content: [{ type: "text", text: directWriteMessage("Created automatic transaction", data) }], structuredContent: toStructured(data) };
     } catch (error) { return { isError: true, content: [{ type: "text", text: String(error) }] }; }
@@ -55,7 +55,7 @@ export function registerAutoTransactionTools(server: McpServer): void {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ id, ...input }) => {
     try {
-      if (await shouldCreateChangeRequest()) return await createChangeRequestResult({ resource: "auto_transactions", action: "update", risk: "high", target_ref: { id }, input_payload: input });
+      if (await shouldCreateChangeRequest()) return await createChangeRequestResult({ resource: "auto_transactions", action: "update", target_ref: { id }, input_payload: input });
       const data = await api.put<unknown>(`/auto-transactions/${id}`, input);
       return { content: [{ type: "text", text: directWriteMessage("Updated automatic transaction", data) }], structuredContent: toStructured(data) };
     } catch (error) { return { isError: true, content: [{ type: "text", text: String(error) }] }; }

@@ -168,7 +168,6 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
             requests.push(await createChangeRequestResult({
               resource: "monthly_plan_lines",
               action: "update",
-              risk: "medium",
               target_ref: { id: update.id },
               input_payload: update,
             }));

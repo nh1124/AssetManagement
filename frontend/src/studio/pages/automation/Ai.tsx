@@ -1,306 +1,262 @@
-import { Settings } from 'lucide-react';
-import Overlay from '../../components/Overlay';
-import { DataTable, Feedback } from '../db/Database';
-import { useRef, useState } from 'react';
-import { endMcpConnection, getAiExecutionSettings, getAiPolicies, getMcpConnections, updateAiExecutionSettings, updateAiPolicies } from '../../../api';
+import { useId, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
+import { isAxiosError } from 'axios';
+import { getAiExecutionSettings, getAiOperations, updateAiExecutionSettings, updateAiOperation } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
-import type { AiExecutionSettings, AiOperationMode, AiOperationPolicy, AiOperationRisk, McpConnection } from '../../../types';
-import { formatCurrency } from '../../../utils/currency';
-import { assetErrorMessage, useResource } from '../../useResource';
-import { buttonClass, inputClass, MODE_LABELS, RISK_LABELS } from './labels';
-import { primaryClass } from '../db/forms';
-import { tr } from '../../i18n';
+import type { AiExecutionSettings, AiMcpWriteMode, AiOperationEntry, AiOperationMode, AiOperations } from '../../../types';
 import { Help } from '../../components/Help';
 import { useConfirm } from '../../components/useConfirm';
-import { formatDate, formatDateTime, useTimezone } from '../../datetime';
-import { newPolicyDefaults, newPolicyPayload, newPolicyProblem, policyPayload, POLICY_ACTIONS, POLICY_RESOURCES, type NewPolicy } from './policyRules';
+import { labels, tr } from '../../i18n';
+import { assetErrorMessage, useResource } from '../../useResource';
+import { buttonClass, inputClass, MODE_LABELS, RISK_LABELS } from './labels';
+import { operationEffect, operationMatches, type KindFilter, type OperationEffect } from './operationRules';
 
-type PolicyEdit = Pick<AiOperationPolicy, 'mode' | 'require_mfa'>;
-type WriteMode = AiExecutionSettings['mcp_write_mode'];
+const WRITE_MODES: AiMcpWriteMode[] = ['direct_write', 'change_request'];
+const WRITE_MODE_LABELS = labels<AiMcpWriteMode>({
+    direct_write: ['直接書き込み', 'Write directly'],
+    change_request: ['承認リクエスト経由', 'Through approval requests'],
+});
+const KIND_FILTERS: KindFilter[] = ['all', 'read', 'write'];
+const KIND_LABELS = labels<KindFilter>({ all: ['すべて', 'All'], read: ['読み取り', 'Reads'], write: ['書き込み', 'Writes'] });
+const EFFECT_LABELS = labels<OperationEffect>({
+    read: ['読み取れる', 'Can read'],
+    no_read: ['読み取れない', 'Cannot read'],
+    direct: ['直接実行できる', 'Runs directly'],
+    available: ['使える（書き込み方式に関係なく）', 'Available in either write mode'],
+    through_approval: ['承認リクエストで実行（人が承認）', 'Through an approval request (a person approves)'],
+    not_in_mode: ['この方式では使えない', 'Not available in this write mode'],
+    no_requests: ['使えない（承認リクエストの作成が禁止）', 'Not available (creating approval requests is denied)'],
+    denied: ['使えない', 'Not available'],
+});
+const UNAVAILABLE: OperationEffect[] = ['no_read', 'not_in_mode', 'no_requests', 'denied'];
+const cellClass = 'block px-5 py-1 md:table-cell md:py-3 md:align-top';
 
-const WRITE_MODE_LABELS: Record<WriteMode, () => string> = {
-    direct_write: () => tr('直接書き込み', 'Write directly'),
-    change_request: () => tr('承認リクエスト経由', 'Through approval requests'),
-};
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const operationName = (operation: Pick<AiOperationEntry, 'ja' | 'en'>) => tr(operation.ja, operation.en);
 
-function appName(row: McpConnection) {
-    return row.client_name || row.oauth_client_id;
+/** On narrow screens a row stands as labelled lines: name, permission, what it means now. */
+function CellLabel({ children }: { children: string }) {
+    return <span aria-hidden="true" className="block text-xs text-[var(--studio-text-muted)] md:hidden">{children}</span>;
 }
 
-/** The AI apps this person connected over MCP, how to connect one, and ending a connection (WP35). */
-function Connections() {
-    const { data, setData, loading, error } = useResource(getMcpConnections);
+function Reload({ error, onReload }: { error: string; onReload: () => void }) {
+    return <p role="alert" className="flex flex-wrap items-center gap-2 text-sm text-[var(--studio-danger)]">{error}
+        <button type="button" onClick={onReload} className={buttonClass}>{tr('再読み込み', 'Reload')}</button></p>;
+}
+
+/** Two named options with a thumb that slides to the chosen one; two radios underneath, so it reads as a choice, not on/off. */
+function WriteModeSwitch({ labelledBy, value, disabled, onChoose }: { labelledBy: string; value: AiMcpWriteMode; disabled: boolean; onChoose: (mode: AiMcpWriteMode) => void }) {
+    const name = useId();
+    return <div role="radiogroup" aria-labelledby={labelledBy} className="relative inline-grid grid-cols-2 rounded-full border border-[var(--studio-border)] bg-[var(--studio-bg)] p-1 text-sm">
+        <span aria-hidden="true" className={`absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-full bg-[var(--studio-accent)] transition-transform duration-200 motion-reduce:transition-none ${value === 'change_request' ? 'translate-x-full' : ''}`} />
+        {WRITE_MODES.map((mode) => <label key={mode} className="relative cursor-pointer whitespace-nowrap rounded-full px-4 py-1.5 text-center text-[var(--studio-text-muted)] has-checked:font-medium has-checked:text-[var(--studio-accent-text)] has-focus-visible:ring-2 has-focus-visible:ring-[var(--studio-accent)] has-disabled:cursor-not-allowed has-disabled:opacity-70">
+            <input type="radio" name={name} value={mode} checked={value === mode} disabled={disabled} onChange={() => onChoose(mode)} className="sr-only" />
+            {WRITE_MODE_LABELS[mode]}
+        </label>)}
+    </div>;
+}
+
+/** The MCP write mode: chosen on the switch, confirmed, then saved at once (owner 2026-10-24, C6'). */
+function WriteMode({ settings, onSaved, loading, error, onReload, approvalNames }: {
+    settings: AiExecutionSettings | null; onSaved: (settings: AiExecutionSettings) => void;
+    loading: boolean; error: string; onReload: () => void; approvalNames: string[];
+}) {
+    const headingId = useId();
     const confirm = useConfirm();
-    const timezone = useTimezone();
-    const [ending, setEnding] = useState<number | null>(null);
+    const [pending, setPending] = useState<AiMcpWriteMode | null>(null);
     const [operationError, setOperationError] = useState('');
     const [confirmation, setConfirmation] = useState('');
-    const [copyStatus, setCopyStatus] = useState<'copied' | 'failed' | null>(null);
-    const command = data?.mcp_url ? `claude mcp add --transport http --scope user asset-management ${data.mcp_url}` : '';
-    const copy = async (text: string) => {
-        try {
-            await navigator.clipboard.writeText(text);
-            setCopyStatus('copied');
-        } catch { setCopyStatus('failed'); }
-    };
-    const end = async (row: McpConnection) => {
-        if (ending !== null || !data) return;
-        const accepted = await confirm(
-            tr(`「${appName(row)}」の接続を切断します。このアプリは次の操作から使えなくなり、使うにはもう一度接続（ログイン）が要ります。`,
-                `Disconnect “${appName(row)}”? The app stops working from its next operation and has to connect (sign in) again.`),
-            tr('切断', 'Disconnect'));
+    const choose = async (mode: AiMcpWriteMode) => {
+        if (!settings || pending || mode === settings.mcp_write_mode) return;
+        setOperationError('');
+        setConfirmation('');
+        const accepted = await confirm(mode === 'change_request'
+            ? tr('MCP の書き込み方式を「承認リクエスト経由」に変更します。AI の直接の書き込みは使えなくなり、承認リクエストに対応する操作だけが、人の承認の後に反映されます。', 'Change MCP writes to “Through approval requests”? The AI can no longer write directly; only operations an approval request supports go through, after a person approves.')
+            : tr('MCP の書き込み方式を「直接書き込み」に変更します。権限が「許可」の書き込みは、AI がそのまま実行できるようになります。', 'Change MCP writes to “Write directly”? Writes whose permission is “Allow” run as soon as the AI asks.'),
+        tr('変更', 'Change'));
         if (!accepted) return;
-        setEnding(row.id);
-        setOperationError('');
-        setConfirmation('');
+        setPending(mode);
         try {
-            await endMcpConnection(row.id);
-            setData({ ...data, connections: data.connections.filter((other) => other.id !== row.id) });
-            setConfirmation(tr(`「${appName(row)}」の接続を切断しました。`, `Disconnected “${appName(row)}”.`));
+            onSaved(await updateAiExecutionSettings({ ...settings, mcp_write_mode: mode }));
+            setConfirmation(tr(`MCP の書き込み方式を「${WRITE_MODE_LABELS[mode]}」にしました。`, `MCP writes are now “${WRITE_MODE_LABELS[mode]}”.`));
         } catch (failure: unknown) {
             setOperationError(assetErrorMessage(failure));
         } finally {
-            setEnding(null);
+            setPending(null);
         }
     };
+    const title = tr('MCP の書き込み方式', 'MCP writes');
+    const approvalList = approvalNames.length ? approvalNames.join(tr('・', ', ')) : tr('（一覧を読み込めていません）', '(the list has not loaded)');
 
     return (
-        <section className="space-y-4">
-            <h2 className="flex items-center gap-1.5 text-lg font-semibold">{tr('AIアプリの接続', 'AI app connections')}
-                <Help label={tr('AIアプリの接続', 'AI app connections')} text={tr('MCP で繋いだ AI アプリ（Claude Code など）の一覧です。接続は、アプリのログイン画面であなたがユーザー名・パスワード・認証コードを入れて許可したときにできます。切断すると、そのアプリは次の操作から使えなくなります。パスワードの変更や全端末からのサインアウトの後は、すべての接続が「再接続が必要」になります。', 'The AI apps (such as Claude Code) connected over MCP. A connection is made when you allow it on the app’s sign-in page with your username, password and authenticator code. A disconnected app stops working from its next operation. After a password change or a sign-out everywhere, every connection needs to reconnect.')} wide />
+        <section className="space-y-3">
+            {/* The switch is named by the title alone, not by the 「?」 text inside the heading. */}
+            <h2 className="flex items-center gap-1.5 text-lg font-semibold"><span id={headingId}>{title}</span>
+                <Help label={title} text={tr(`直接書き込み：権限が「許可」の書き込みを AI がそのまま実行します。「承認が必要」の操作は、AI が承認リクエストを作り、人が承認してから反映されます。承認リクエスト経由：AI の書き込みはすべて承認リクエストになります。承認リクエストに対応する操作は ${approvalList} です。`, `Write directly: writes whose permission is “Allow” run as soon as the AI asks; operations that need approval go through an approval request a person approves. Through approval requests: every AI write becomes an approval request. The operations an approval request supports: ${approvalList}.`)} wide />
             </h2>
-            <Feedback loading={loading} error={error || operationError} message={confirmation} />
-            {data && <>
-                <div className="space-y-2 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4 text-sm">
-                    <p className="flex items-center gap-1.5 font-semibold">{tr('接続の手順', 'How to connect')}
-                        <Help label={tr('接続の手順', 'How to connect')} text={tr('ほかの AI アプリでは、MCP サーバーの URL を「リモート MCP サーバー」や「コネクタ」として登録します。繋がらないときは、アプリが表示するエラーを確認してください（invalid_client：アプリの登録が見つからない、invalid_redirect_uri：戻り先が登録と違う、invalid_target：別のサーバー宛て）。', 'In other AI apps, add the MCP server URL as a remote MCP server or connector. If it does not connect, check the error the app shows (invalid_client: the app’s registration was not found; invalid_redirect_uri: the return address differs from the registration; invalid_target: meant for another server).')} wide />
-                    </p>
-                    <ol className="list-decimal space-y-2 pl-5">
-                        <li>{tr('Claude Code では、ターミナルで次のコマンドを実行します。', 'In Claude Code, run this command in a terminal.')}
-                            <span className="mt-1 flex flex-wrap items-center gap-2"><code className="select-all break-all font-mono text-xs">{command}</code>
-                                <button type="button" onClick={() => void copy(command)} disabled={!command} className={buttonClass}>{tr('コピー', 'Copy')}</button></span>
-                        </li>
-                        <li>{tr('ほかのアプリでは、MCP サーバーの URL を登録します。', 'In other apps, add the MCP server URL.')}
-                            <span className="mt-1 flex flex-wrap items-center gap-2"><code className="select-all break-all font-mono text-xs">{data.mcp_url}</code>
-                                <button type="button" onClick={() => void copy(data.mcp_url)} disabled={!data.mcp_url} className={buttonClass}>{tr('コピー', 'Copy')}</button></span>
-                        </li>
-                        <li>{tr('アプリが開くログイン画面で、このアプリのユーザー名・パスワード・認証コードを入れて許可します。', 'On the sign-in page the app opens, enter your username, password and authenticator code for this app, and allow it.')}</li>
-                    </ol>
-                    {copyStatus && <p role={copyStatus === 'failed' ? 'alert' : 'status'} className="text-xs">{copyStatus === 'copied' ? tr('コピーしました。', 'Copied.') : tr('コピーできません。選んでコピーしてください。', 'Could not copy. Select the text and copy it.')}</p>}
-                </div>
-                <DataTable columns={[tr('アプリ', 'App'), tr('アプリの情報', 'App information'), tr('戻り先', 'Returns to'), tr('接続した日時', 'Connected'), tr('最後に使った日時', 'Last used'), tr('状態', 'Status'), tr('操作', 'Action')]}>
-                    {data.connections.length ? data.connections.map((row) => <tr key={row.id}>
-                        <th scope="row" className="px-5 py-3 font-medium">{appName(row)}<span className="mt-1 block break-all text-xs font-normal text-[var(--studio-text-muted)]">{row.oauth_client_id}</span></th>
-                        <td className="px-5 py-3">{row.client_source === 'cimd'
-                            ? tr(`公開された情報（${row.client_host ?? ''}）`, `Published by ${row.client_host ?? ''}`)
-                            : tr('このサーバーに登録', 'Registered with this server')}</td>
-                        <td className="px-5 py-3">{row.redirect_host && LOOPBACK_HOSTS.has(row.redirect_host)
-                            ? tr(`このコンピューター（${row.redirect_host}）`, `This computer (${row.redirect_host})`)
-                            : row.redirect_host ?? '—'}</td>
-                        <td className="whitespace-nowrap px-5 py-3 text-xs"><time dateTime={row.connected_at}>{formatDateTime(row.connected_at, timezone)}</time></td>
-                        <td className="whitespace-nowrap px-5 py-3 text-xs">{row.last_used_at ? <time dateTime={row.last_used_at}>{formatDateTime(row.last_used_at, timezone)}</time> : '—'}</td>
-                        <td className="px-5 py-3">{row.status === 'active' ? tr('有効', 'Active') : <span className="text-[var(--studio-danger)]">{tr('再接続が必要', 'Reconnect required')}</span>}
-                            <span className="mt-1 block text-xs text-[var(--studio-text-muted)]">{row.refreshable
-                                ? tr(`${formatDate(row.expires_at, timezone)}まで（使うと延長）`, `Until ${formatDate(row.expires_at, timezone)} (extended when used)`)
-                                : tr(`${formatDateTime(row.expires_at, timezone)}まで`, `Until ${formatDateTime(row.expires_at, timezone)}`)}</span>
-                        </td>
-                        <td className="px-5 py-3"><button type="button" onClick={() => void end(row)} disabled={ending !== null} className={buttonClass}>{ending === row.id ? tr('切断中…', 'Disconnecting…') : tr('切断', 'Disconnect')}</button></td>
-                    </tr>) : <tr><td colSpan={7} className="px-5 py-4 text-[var(--studio-text-muted)]">{tr('接続している AI アプリはありません。', 'No AI apps are connected.')}</td></tr>}
-                </DataTable>
+            {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{tr('読み込んでいます…', 'Loading…')}</p>}
+            {error && <Reload error={tr(`書き込み方式を取得できませんでした。${error}`, `Could not load the write mode. ${error}`)} onReload={onReload} />}
+            {settings && !error && <>
+                <WriteModeSwitch labelledBy={headingId} value={pending ?? settings.mcp_write_mode} disabled={pending !== null} onChoose={(mode) => void choose(mode)} />
+                {pending && <p role="status" className="text-xs text-[var(--studio-text-muted)]">{tr('保存中…', 'Saving…')}</p>}
+                {!pending && settings.mcp_write_mode === 'change_request' && <p className="text-xs text-[var(--studio-text-muted)]">{tr('承認リクエスト経由では、承認リクエストに対応していない書き込みは使えません。', 'Through approval requests, writes an approval request does not support are not available.')}</p>}
             </>}
+            {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}
+            {confirmation && <p role="status" className="text-sm text-[var(--studio-positive)]">{confirmation}</p>}
         </section>
     );
 }
 
-/** What the AI may do: the MCP write mode and the permission rules, edited together behind ⚙ (owner 2026-10-24, C6). */
-function Permissions({ currency }: { currency: string }) {
-    const policies = useResource(getAiPolicies);
-    const settings = useResource(getAiExecutionSettings);
-    const [editing, setEditing] = useState(false);
-    const [mode, setMode] = useState<WriteMode | null>(null);
-    const [edits, setEdits] = useState<Record<number, PolicyEdit>>({});
-    const [added, setAdded] = useState<NewPolicy[]>([]);
-    const [draft, setDraft] = useState<NewPolicy>(newPolicyDefaults);
-    const [saving, setSaving] = useState(false);
-    const [operationError, setOperationError] = useState('');
-    const [confirmation, setConfirmation] = useState('');
-    const inFlight = useRef(false);
-    const loading = policies.loading || settings.loading;
-    const error = policies.error || settings.error;
-    const data = policies.data;
-    const rows = data?.map((row) => ({ ...row, ...edits[row.id] })) ?? [];
-    const rulesChanged = (data?.filter((row) => {
-        const edit = edits[row.id];
-        return edit && (edit.mode !== row.mode || edit.require_mfa !== row.require_mfa);
-    }).length ?? 0) + added.length;
-    const modeChanged = settings.data !== null && mode !== null && mode !== settings.data.mcp_write_mode;
-    const changed = rulesChanged + (modeChanged ? 1 : 0);
-    const draftProblem = newPolicyProblem(draft, [...rows, ...added.map(newPolicyPayload)]);
+type RowState =
+    | { status: 'saving'; mode: AiOperationMode }
+    | { status: 'saved' }
+    | { status: 'failed'; mode: AiOperationMode; message: string }
+    | { status: 'changed_elsewhere' };
 
-    const editRow = (row: AiOperationPolicy, patch: Partial<PolicyEdit>) => {
-        setEdits((previous) => ({ ...previous, [row.id]: { mode: row.mode, require_mfa: row.require_mfa, ...patch } }));
-        setConfirmation('');
-    };
-    const addRule = () => {
-        if (draftProblem) return;
-        setAdded((previous) => [...previous, draft]);
-        setDraft(newPolicyDefaults());
-        setConfirmation('');
-    };
-    const discard = () => {
-        setMode(null);
-        setEdits({});
-        setAdded([]);
-        setDraft(newPolicyDefaults());
-    };
-    const save = async () => {
-        if (inFlight.current || loading || error || !data || !settings.data || !changed) return;
-        inFlight.current = true;
-        setSaving(true);
-        setOperationError('');
-        setConfirmation('');
+/** The mode saved since the screen loaded, when the backend refused a save as changed elsewhere. */
+function changedElsewhere(failure: unknown): AiOperationMode | null {
+    if (!isAxiosError<{ detail?: { error?: unknown; mode?: unknown } }>(failure) || failure.response?.status !== 409) return null;
+    const detail = failure.response.data?.detail;
+    return detail?.error === 'changed_elsewhere' && (detail.mode === 'allow' || detail.mode === 'approval' || detail.mode === 'deny') ? detail.mode : null;
+}
+
+function RowStatus({ state, onRetry }: { state: RowState | undefined; onRetry: () => void }) {
+    if (!state) return null;
+    if (state.status === 'saving') return <span role="status" className="block text-xs text-[var(--studio-text-muted)]">{tr('保存中…', 'Saving…')}</span>;
+    if (state.status === 'saved') return <span role="status" className="block text-xs text-[var(--studio-positive)]">{tr('保存しました', 'Saved')}</span>;
+    if (state.status === 'changed_elsewhere') return <span role="alert" className="block text-xs text-[var(--studio-warning)]">{tr('別の画面で変更されていました。今の値を表示しています。', 'It was changed elsewhere. Showing the current value.')}</span>;
+    return <span role="alert" className="flex flex-wrap items-center gap-2 text-xs text-[var(--studio-danger)]">{tr(`保存できませんでした（${state.message}）`, `Could not save (${state.message})`)}
+        <button type="button" onClick={onRetry} className={buttonClass}>{tr('再試行', 'Retry')}</button></span>;
+}
+
+/** Every operation the AI can perform, a permission per row, each saved on its own (owner 2026-10-24, C7). */
+function Permissions({ data, setData, loading, error, onReload, writeMode }: {
+    data: AiOperations | null; setData: (update: (previous: AiOperations | null) => AiOperations | null) => void;
+    loading: boolean; error: string; onReload: () => void; writeMode: AiMcpWriteMode | null;
+}) {
+    const [query, setQuery] = useState('');
+    const [kind, setKind] = useState<KindFilter>('all');
+    const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+    const [rows, setRows] = useState<Record<string, RowState>>({});
+    const filterName = useId();
+    const searching = query.trim() !== '';
+    const all = data?.sections.flatMap((section) => section.operations) ?? [];
+    // Every way through approval starts with a change request, so denying that closes them all.
+    const requests = all.find((operation) => operation.key === 'change_requests.create')?.mode !== 'deny';
+    const sections = data?.sections
+        .map((section) => ({ ...section, shown: section.operations.filter((operation) => operationMatches(operation, query, kind)) }))
+        .filter((section) => section.shown.length) ?? [];
+    const localTools = kind === 'write' ? [] : data?.local_tools.filter((tool) => operationMatches({ kind: 'read', key: tool, ja: '', en: '', tools: [] }, query, 'all')) ?? [];
+
+    const setRow = (key: string, state: RowState) => setRows((previous) => ({ ...previous, [key]: state }));
+    const replace = (updated: AiOperationEntry) => setData((previous) => previous && {
+        ...previous,
+        sections: previous.sections.map((section) => ({
+            ...section, operations: section.operations.map((operation) => operation.key === updated.key ? updated : operation),
+        })),
+    });
+    const save = async (operation: AiOperationEntry, mode: AiOperationMode) => {
+        if (rows[operation.key]?.status === 'saving') return;
+        setRow(operation.key, { status: 'saving', mode });
         try {
-            // Supported operations are server capabilities, so only the write mode is edited.
-            if (modeChanged && mode) {
-                settings.setData(await updateAiExecutionSettings({ ...settings.data, mcp_write_mode: mode }));
-                setMode(null);
-            }
-            if (rulesChanged) {
-                policies.setData(await updateAiPolicies([...rows.map(policyPayload), ...added.map(newPolicyPayload)]));
-            }
-            discard();
-            setEditing(false);
-            setConfirmation(tr('AIの実行設定と権限ルールを保存しました。', 'Saved the AI execution settings and permissions.'));
+            replace(await updateAiOperation(operation.key, { mode, expected_mode: operation.mode }));
+            setRow(operation.key, { status: 'saved' });
         } catch (failure: unknown) {
-            setOperationError(assetErrorMessage(failure));
-        } finally {
-            inFlight.current = false;
-            setSaving(false);
+            const current = changedElsewhere(failure);
+            if (current) {
+                replace({ ...operation, mode: current, saved: true });
+                setRow(operation.key, { status: 'changed_elsewhere' });
+            } else {
+                setRow(operation.key, { status: 'failed', mode, message: assetErrorMessage(failure) });
+            }
         }
     };
-    const editLabel = tr('AIの実行設定と権限ルールを編集', 'Edit AI execution settings and permissions');
+    const toggle = (key: string) => setCollapsed((previous) => {
+        const next = new Set(previous);
+        if (!next.delete(key)) next.add(key);
+        return next;
+    });
+    const title = tr('AI 操作の権限', 'AI operation permissions');
 
     return (
         <section className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-lg font-semibold">{tr('AI操作の権限', 'AI operation permissions')}</h2>
-                <button type="button" disabled={loading || saving || Boolean(error) || !data || !settings.data} onClick={() => setEditing(true)} aria-label={editLabel} title={editLabel}
-                    className={`${buttonClass} inline-flex items-center`}><Settings size={16} aria-hidden="true" /></button>
-            </div>
-            {!editing && <Feedback loading={loading} error={error || operationError} message={confirmation} />}
-            {settings.data && <p className="text-sm">{tr('MCPの書き込み方式：', 'MCP writes: ')}<strong>{WRITE_MODE_LABELS[settings.data.mcp_write_mode]()}</strong></p>}
-            {data && <DataTable columns={[tr('対象', 'Resource'), tr('操作', 'Operation'), tr('権限ルール', 'Permission'), tr('リスク', 'Risk')]}>
-                {data.length ? data.map((row) => <tr key={row.id}>
-                    <th scope="row" className="px-5 py-3 font-medium">{row.resource}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{row.ai_client_id == null ? tr('すべてのAIクライアント', 'All AI clients') : tr(`AIクライアント #${row.ai_client_id}`, `AI client #${row.ai_client_id}`)}</span></th>
-                    <td className="px-5 py-3">{row.action}</td>
-                    <td className="space-y-2 px-5 py-3"><p>{MODE_LABELS[row.mode]}{row.require_mfa && tr(' ／ MFAを必須にする', ' / MFA required')}</p>
-                        {row.threshold_amount != null && <p className="text-xs text-[var(--studio-text-muted)]">{tr(`金額条件：${formatCurrency(row.threshold_amount, currency)}（${currency}）`, `Amount threshold: ${formatCurrency(row.threshold_amount, currency)} (${currency})`)}</p>}
-                        {row.threshold_count != null && <p className="text-xs text-[var(--studio-text-muted)]">{tr(`件数条件：${row.threshold_count}件`, `Count threshold: ${row.threshold_count}`)}</p>}
-                    </td><td className="px-5 py-3">{RISK_LABELS[row.risk]}</td>
-                </tr>) : <tr><td colSpan={4} className="px-5 py-4 text-[var(--studio-text-muted)]">{tr('登録された権限ルールはありません。', 'No permission rules.')}</td></tr>}
-            </DataTable>}
-            {editing && <Overlay title={tr('AIの実行設定と権限ルール', 'AI execution settings and permissions')} footer={<button type="button" onClick={() => void save()} disabled={loading || saving || Boolean(error) || !changed} className={primaryClass}>{saving ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}</button>} onClose={() => { setEditing(false); discard(); }}>
-                <Feedback error={operationError || error} />
-                {settings.data && <fieldset disabled={loading || saving || Boolean(error)} className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4">
-                    <legend className="px-1 text-sm font-semibold">{tr('実行設定', 'Execution settings')}</legend>
-                    <label className="flex flex-wrap items-center gap-3 text-sm">{tr('MCPの書き込み方式', 'MCP writes')}
-                        <select value={mode ?? settings.data.mcp_write_mode} onChange={(event) => { setMode(event.target.value as WriteMode); setConfirmation(''); }} className={inputClass}>
-                            {(Object.keys(WRITE_MODE_LABELS) as WriteMode[]).map((value) => <option key={value} value={value}>{WRITE_MODE_LABELS[value]()}</option>)}
-                        </select>
-                    </label>
-                    <p className="text-xs text-[var(--studio-text-muted)]">{tr('承認リクエストに対応する操作（参照のみ）', 'Operations that support approval requests (read only)')}</p>
-                    {settings.data.supported_change_request_operations.length ? <ul className="space-y-1 text-xs">{settings.data.supported_change_request_operations.map((operation) => <li key={operation}>{operation}</li>)}</ul> : <p className="text-xs text-[var(--studio-text-muted)]">{tr('対応する操作はありません。', 'None.')}</p>}
-                </fieldset>}
-            {data && (rows.length || added.length ? (
-                <fieldset disabled={loading || saving || Boolean(error)}>
-                    <legend className="mb-2 px-1 text-sm font-semibold">{tr('権限ルール', 'Permission rules')}</legend>
-                    <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
-                        <table className="w-full text-left text-sm" aria-busy={loading || saving}>
-                            <thead className="border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)]">
-                                <tr>{[tr('対象', 'Resource'), tr('操作', 'Operation'), tr('権限ルール', 'Permission'), tr('リスク', 'Risk')].map((label) => <th scope="col" key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr>
-                            </thead>
-                            <tbody className="divide-y divide-[var(--studio-border)]">
-                                {rows.map((row) => (
-                                    <tr key={row.id}>
-                                        <th scope="row" className="px-5 py-3 font-medium">
-                                            {row.resource}
-                                            <span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{row.ai_client_id == null ? tr('すべてのAIクライアント', 'All AI clients') : tr(`AIクライアント #${row.ai_client_id}`, `AI client #${row.ai_client_id}`)}</span>
-                                        </th>
-                                        <td className="px-5 py-3">{row.action}</td>
-                                        <td className="space-y-2 px-5 py-3">
-                                            <select aria-label={tr(`${row.resource}・${row.action}・${RISK_LABELS[row.risk]}の権限ルール`, `Permission for ${row.resource} ${row.action} (${RISK_LABELS[row.risk]})`)} value={row.mode} onChange={(event) => editRow(row, { mode: event.target.value as AiOperationMode })} className={inputClass}>
-                                                {Object.entries(MODE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                                            </select>
-                                            <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={row.require_mfa} onChange={(event) => editRow(row, { require_mfa: event.target.checked })} />{tr('MFAを必須にする', 'Require MFA')}</label>
-                                            {row.threshold_amount != null && <p className="text-xs text-[var(--studio-text-muted)]">{tr(`金額条件：${formatCurrency(row.threshold_amount, currency)}（${currency}）`, `Amount threshold: ${formatCurrency(row.threshold_amount, currency)} (${currency})`)}</p>}
-                                            {row.threshold_count != null && <p className="text-xs text-[var(--studio-text-muted)]">{tr(`件数条件：${row.threshold_count}件`, `Count threshold: ${row.threshold_count}`)}</p>}
-                                        </td>
-                                        <td className="whitespace-nowrap px-5 py-3">{RISK_LABELS[row.risk]}</td>
-                                    </tr>
-                                ))}
-                                {added.map((rule, index) => (
-                                    <tr key={`added-${index}`}>
-                                        <th scope="row" className="px-5 py-3 font-medium">
-                                            {rule.resource.trim().toLowerCase()}
-                                            <span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{tr('すべてのAIクライアント・未保存', 'All AI clients · not saved')}</span>
-                                        </th>
-                                        <td className="px-5 py-3">{rule.action.trim().toLowerCase()}</td>
-                                        <td className="space-y-2 px-5 py-3"><p>{MODE_LABELS[rule.mode]}{rule.require_mfa && tr(' ／ MFAを必須にする', ' / MFA required')}</p>
-                                            <button type="button" onClick={() => setAdded((previous) => previous.filter((_, other) => other !== index))} className={buttonClass}>{tr('追加を取り消す', 'Remove')}</button>
-                                        </td>
-                                        <td className="whitespace-nowrap px-5 py-3">{RISK_LABELS[rule.risk]}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </fieldset>
-            ) : <p className="text-sm text-[var(--studio-text-muted)]">{tr('登録された権限ルールはありません。', 'No permission rules.')}</p>)}
-            {data && <fieldset disabled={loading || saving || Boolean(error)} className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4">
-                <legend className="flex items-center gap-1.5 px-1 text-sm font-semibold">{tr('権限ルールを追加', 'Add a permission rule')}
-                    <Help label={tr('権限ルールを追加', 'Add a permission rule')} text={tr('ルールの無い操作は既定の扱いになります（読み取りは許可、書き込みは承認が必要）。AIがMCPから帳簿へ直接書き込むには、MCPの書き込み方式を「直接書き込み」にし、transactions・create・中 を「実行を許可」にします。追加したルールはすべてのAIクライアントに効きます。', 'Operations without a rule follow the defaults (reads allowed, writes need approval). For the AI to write the ledger directly over MCP, set MCP writes to “Write directly” and transactions · create · Medium to “Allow”. An added rule applies to every AI client.')} wide />
-                </legend>
-                <div className="flex flex-wrap items-end gap-3 text-sm">
-                    <label className="flex flex-col gap-1">{tr('対象', 'Resource')}
-                        <input value={draft.resource} list="ai-policy-resources" onChange={(event) => setDraft({ ...draft, resource: event.target.value })} className={inputClass} />
-                    </label>
-                    <label className="flex flex-col gap-1">{tr('操作', 'Operation')}
-                        <input value={draft.action} list="ai-policy-actions" onChange={(event) => setDraft({ ...draft, action: event.target.value })} className={inputClass} />
-                    </label>
-                    <label className="flex flex-col gap-1">{tr('リスク', 'Risk')}
-                        <select value={draft.risk} onChange={(event) => setDraft({ ...draft, risk: event.target.value as AiOperationRisk })} className={inputClass}>
-                            {Object.entries(RISK_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                        </select>
-                    </label>
-                    <label className="flex flex-col gap-1">{tr('権限ルール', 'Permission')}
-                        <select value={draft.mode} onChange={(event) => setDraft({ ...draft, mode: event.target.value as AiOperationMode })} className={inputClass}>
-                            {Object.entries(MODE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                        </select>
-                    </label>
-                    <label className="flex items-center gap-2 py-2 text-xs"><input type="checkbox" checked={draft.require_mfa} onChange={(event) => setDraft({ ...draft, require_mfa: event.target.checked })} />{tr('MFAを必須にする', 'Require MFA')}</label>
-                    <button type="button" onClick={addRule} disabled={Boolean(draftProblem)} className={buttonClass}>{tr('追加', 'Add')}</button>
+            <h2 className="flex items-center gap-1.5 text-lg font-semibold">{title}
+                <Help label={title} text={tr('MCP で繋いだ AI アプリが使える操作の一覧です。権限は行ごとに選ぶとすぐ保存されます。許可：AI が使える。承認が必要：AI は承認リクエストを作り、人が認証コードを入れて承認してから反映される。禁止：AI は使えない。あなた自身の画面の操作には効きません。', 'Every operation an AI app connected over MCP can use. A permission is saved as soon as you choose it. Allow: the AI can use it. Needs approval: the AI creates an approval request, applied after a person approves it with an authenticator code. Deny: the AI cannot use it. Your own actions on these screens are not affected.')} wide />
+            </h2>
+            <div className="flex flex-wrap items-center gap-3">
+                <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={tr('操作を検索', 'Search operations')} placeholder={tr('操作名・ツール名で検索', 'Search by operation or tool')} className={`w-64 max-w-full ${inputClass}`} />
+                <div role="radiogroup" aria-label={tr('種類で絞り込む', 'Filter by kind')} className="flex gap-2">
+                    {KIND_FILTERS.map((value) => <label key={value} className="cursor-pointer rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] has-checked:border-[var(--studio-accent)] has-checked:bg-[var(--studio-accent-soft)] has-checked:text-[var(--studio-accent)] has-focus-visible:ring-2 has-focus-visible:ring-[var(--studio-accent)]">
+                        <input type="radio" name={filterName} value={value} checked={kind === value} onChange={() => setKind(value)} className="sr-only" />{KIND_LABELS[value]}
+                    </label>)}
                 </div>
-                <datalist id="ai-policy-resources">{POLICY_RESOURCES.map((resource) => <option key={resource} value={resource} />)}</datalist>
-                <datalist id="ai-policy-actions">{POLICY_ACTIONS.map((action) => <option key={action} value={action} />)}</datalist>
-                {draftProblem === 'missing' && <p className="text-xs text-[var(--studio-text-muted)]">{tr('対象と操作を入力してください。', 'Enter a resource and an operation.')}</p>}
-                {draftProblem === 'duplicate' && <p role="alert" className="text-xs text-[var(--studio-danger)]">{tr('同じ対象・操作・リスクのルールがあります。上の表で変更してください。', 'A rule for this resource, operation and risk exists. Change it in the table above.')}</p>}
-            </fieldset>}
-            <div className="flex items-center gap-3">
-                <span role="status" className="text-xs text-[var(--studio-text-muted)]">{tr(`変更した項目：${changed}件`, `Changed items: ${changed}`)}</span>
-                {changed > 0 && <button type="button" onClick={() => { discard(); setOperationError(''); }} disabled={saving} className={buttonClass}>{tr('変更を戻す', 'Undo changes')}</button>}
             </div>
-            </Overlay>}
+            {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{tr('読み込んでいます…', 'Loading…')}</p>}
+            {error && <Reload error={tr(`操作の一覧を取得できませんでした。${error}`, `Could not load the operations. ${error}`)} onReload={onReload} />}
+            {data && !error && (sections.length ? (
+                <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
+                    <table className="block w-full text-left text-sm md:table">
+                        <thead className="hidden border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)] md:table-header-group"><tr>
+                            {[tr('操作', 'Operation'), tr('権限', 'Permission'), tr('今の扱い', 'What it means now')].map((label) => <th key={label} scope="col" className="whitespace-nowrap px-5 py-3 font-medium">{label}</th>)}
+                        </tr></thead>
+                        {sections.map((section) => {
+                            const open = searching || !collapsed.has(section.key);
+                            const denied = section.operations.filter((operation) => operation.mode === 'deny').length;
+                            const bodyId = `${filterName}-${section.key}`;
+                            return <tbody key={section.key} id={bodyId} className="block border-t border-[var(--studio-border)] first-of-type:border-t-0 md:table-row-group">
+                                <tr className="block md:table-row"><th scope="rowgroup" colSpan={3} className="block bg-[var(--studio-bg)] px-3 py-2 md:table-cell">
+                                    <button type="button" aria-expanded={open} aria-controls={bodyId} disabled={searching} onClick={() => toggle(section.key)} className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm font-semibold hover:bg-[var(--studio-accent-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:cursor-default disabled:hover:bg-transparent">
+                                        <ChevronDown size={16} aria-hidden="true" className={`shrink-0 transition-transform motion-reduce:transition-none ${open ? '' : '-rotate-90'}`} />
+                                        {tr(section.ja, section.en)}
+                                        <span className="text-xs font-normal text-[var(--studio-text-muted)]">{tr(`${section.operations.length} 操作・禁止 ${denied}`, `${section.operations.length} operations · ${denied} denied`)}{(searching || kind !== 'all') && tr(`・表示 ${section.shown.length}`, ` · ${section.shown.length} shown`)}</span>
+                                    </button>
+                                </th></tr>
+                                {open && section.shown.map((operation) => {
+                                    const state = rows[operation.key];
+                                    const shownMode = state?.status === 'saving' ? state.mode : operation.mode;
+                                    const effect = writeMode ? operationEffect(operation, operation.mode, writeMode, requests) : null;
+                                    const name = operationName(operation);
+                                    return <tr key={operation.key} className="block py-2 md:table-row md:py-0">
+                                        <th scope="row" className={`${cellClass} font-medium`}>{name}
+                                            <span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{operation.kind === 'read' ? tr('読み取り', 'Read') : tr('書き込み', 'Write')}{tr('・リスク：', ' · Risk: ')}{RISK_LABELS[operation.risk]}</span>
+                                            <span className="mt-1 block break-all font-mono text-[11px] font-normal text-[var(--studio-text-muted)]">{operation.tools.length ? operation.tools.join(' · ') : tr('（MCP のツールなし）', '(no MCP tool)')}</span>
+                                        </th>
+                                        <td className={cellClass}><CellLabel>{tr('権限', 'Permission')}</CellLabel>
+                                            <select aria-label={tr(`${name}の権限`, `Permission for ${name}`)} value={shownMode} disabled={state?.status === 'saving'} onChange={(event) => void save(operation, event.target.value as AiOperationMode)} className={inputClass}>
+                                                {operation.modes.map((mode) => <option key={mode} value={mode}>{MODE_LABELS[mode]}</option>)}
+                                            </select>
+                                            <RowStatus state={state} onRetry={() => { if (state?.status === 'failed') void save(operation, state.mode); }} />
+                                        </td>
+                                        <td className={`${cellClass} pb-3`}><CellLabel>{tr('今の扱い', 'What it means now')}</CellLabel>
+                                            {effect ? <span className={UNAVAILABLE.includes(effect) ? 'text-[var(--studio-text-muted)]' : ''}>{EFFECT_LABELS[effect]}</span> : '—'}
+                                        </td>
+                                    </tr>;
+                                })}
+                            </tbody>;
+                        })}
+                    </table>
+                </div>
+            ) : <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5 text-sm text-[var(--studio-text-muted)]">{tr('一致する操作はありません。', 'No operations match.')}</p>)}
+            {data && !error && localTools.length > 0 && <p className="text-xs text-[var(--studio-text-muted)]">
+                <span className="font-medium">{tr('計算だけのツール（データを使わないので権限の対象外）：', 'Tools that only compute (they use no data, so no permission applies): ')}</span>
+                <span className="break-all font-mono">{localTools.join(' · ')}</span>
+            </p>}
         </section>
     );
 }
 
-function AiForClient({ currency }: { currency: string }) {
-    return <div className="space-y-8"><Connections /><Permissions currency={currency} /></div>;
+function AiForClient() {
+    const operations = useResource(getAiOperations);
+    const settings = useResource(getAiExecutionSettings);
+    const approvalNames = operations.data?.sections.flatMap((section) => section.operations).filter((operation) => operation.approval).map(operationName) ?? [];
+    return <div className="space-y-8">
+        <WriteMode settings={settings.data} onSaved={settings.setData} loading={settings.loading} error={settings.error} onReload={settings.reload} approvalNames={approvalNames} />
+        <Permissions data={operations.data} setData={operations.setData} loading={operations.loading} error={operations.error} onReload={operations.reload}
+            writeMode={settings.data && !settings.error ? settings.data.mcp_write_mode : null} />
+    </div>;
 }
 
 export default function Ai() {
-    const { clientId, currentClient } = useClient();
-    // A client switch must discard both unsaved rules and responses from the previous client.
-    return <AiForClient key={clientId} currency={currentClient?.general_settings?.currency || 'JPY'} />;
+    const { clientId } = useClient();
+    // A client switch must discard responses and row states from the previous client.
+    return <AiForClient key={clientId} />;
 }

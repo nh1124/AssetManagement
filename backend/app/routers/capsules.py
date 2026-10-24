@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from ..domain.messages import Message
 from .. import database, dependencies, models, schemas
 from ..services import capsule_service
-from ..services.ai_policy_service import assert_direct_ledger_write_allowed
 from ..services.capsule_service import (
     capsule_to_dict,
     funding_source_to_dict,
@@ -141,11 +140,6 @@ def delete_capsule(
     return result
 
 
-def _ledger_write(db: Session, client_id: int, request: Request | None) -> None:
-    """Drawdowns, claim adjustments and contributions post journal legs: an AI needs the direct-write policy."""
-    assert_direct_ledger_write_allowed(db, client_id, mcp_client_id=dependencies.mcp_client_id())
-
-
 @router.post("/{capsule_id}/drawdown", response_model=schemas.CapsuleDrawdownResult)
 def record_capsule_drawdown(
     capsule_id: int, payload: schemas.CapsuleDrawdownRequest,
@@ -153,7 +147,6 @@ def record_capsule_drawdown(
     current_client: models.Client = Depends(dependencies.get_current_client),
     request: Request = None,
 ):
-    _ledger_write(db, current_client.id, request)
     transaction, drawdown = capsule_service.record_drawdown(
         db, current_client.id, capsule_id, **payload.model_dump(),
     )
@@ -178,7 +171,6 @@ def set_capsule_account_claim(
     current_client: models.Client = Depends(dependencies.get_current_client),
     request: Request = None,
 ):
-    _ledger_write(db, current_client.id, request)
     return capsule_workflow.set_account_claim(
         db, current_client.id, capsule_id, **payload.model_dump(),
     )
@@ -192,7 +184,6 @@ def contribute_to_capsule(
     current_client: models.Client = Depends(dependencies.get_current_client),
     request: Request = None,
 ):
-    _ledger_write(db, current_client.id, request)
     return capsule_workflow.contribute(
         db, current_client.id, capsule_id,
         amount=payload.amount, from_account_id=payload.from_account_id,

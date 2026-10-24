@@ -107,7 +107,6 @@ export function registerTransactionTools(server: McpServer): void {
           return await createChangeRequestResult({
             resource: "transactions",
             action: "create",
-            risk: "medium",
             input_payload: body,
           });
         }

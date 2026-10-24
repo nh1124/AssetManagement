@@ -30,10 +30,9 @@ function RequestList({ status, currency }: { status: StatusFilter; currency: str
 
     const runAction = async (request: AiChangeRequest, action: RequestAction) => {
         if (inFlight.current || loading || error) return;
-        // Critical requests need step-up too; never approve them without a token.
-        const needsMfa = request.requires_mfa || request.risk === 'critical';
+        // Every approval is confirmed with the authenticator code (WP36).
         const factor = (factors[request.id] ?? '').trim();
-        if (action === 'approve' && (request.status !== 'pending' || (needsMfa && !factor))) return;
+        if (action === 'approve' && (request.status !== 'pending' || !factor)) return;
         if (action === 'apply' && request.status !== 'approved') return;
         if (action === 'reject' && !['pending', 'approved', 'failed'].includes(request.status)) return;
         if (action === 'rebuild' && request.status !== 'failed') return;
@@ -43,7 +42,7 @@ function RequestList({ status, currency }: { status: StatusFilter; currency: str
         setConfirmation('');
         try {
             let stepUpToken: string | undefined;
-            if (action === 'approve' && needsMfa) {
+            if (action === 'approve') {
                 try {
                     stepUpToken = (await reauth(stepUpFactor(factor))).step_up_token;
                 } catch {
@@ -77,9 +76,8 @@ function RequestList({ status, currency }: { status: StatusFilter; currency: str
             {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}
             {confirmation && <p role="status" className="text-sm text-[var(--studio-positive)]">{confirmation}</p>}
             {data && (data.length ? data.map((request) => {
-                const needsMfa = request.requires_mfa || request.risk === 'critical';
                 const disabled = loading || Boolean(error) || busy !== null;
-                const stepUp = needsMfa && request.status === 'pending';
+                const stepUp = request.status === 'pending';
                 return (
                     <article key={request.id} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5" aria-busy={busy?.id === request.id}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
