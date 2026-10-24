@@ -39,11 +39,12 @@ def login(db, password="password123", username="tester"):
     return auth.login(auth.LoginRequest(username=username, password=password), db)
 
 
-def enroll(db):
+def enroll(db, at=None):
     step = login(db)
     setup = auth.start_enrollment(auth.StepRequest(step_token=step["step_token"]), db)
+    totp = pyotp.TOTP(setup["manual_entry_key"])
     completed = auth.verify_enrollment(auth.EnrollVerifyRequest(
-        step_token=step["step_token"], code=pyotp.TOTP(setup["manual_entry_key"]).now()), db)
+        step_token=step["step_token"], code=totp.at(at) if at else totp.now()), db)
     return setup["manual_entry_key"], completed
 
 
@@ -537,9 +538,19 @@ def test_totp_replay_and_next_window_including_stale_session(db, monkeypatch):
     assert not mfa_service.verify_mfa_factor(db, client, code=code)  # Still in allowed time window.
 
 
-def test_enrollment_code_is_consumed(db):
-    secret, _ = enroll(db)
+def test_enrollment_code_is_consumed(db, monkeypatch):
+    # Pin the clock: across a TOTP step boundary the sign-in code would legitimately be new.
+    clock = datetime(2026, 10, 22, 12, 0, 0, tzinfo=timezone.utc)
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock if tz else clock.replace(tzinfo=None)
+        @classmethod
+        def utcnow(cls):
+            return clock.replace(tzinfo=None)
+    monkeypatch.setattr(mfa_service, "datetime", Clock)
+    secret, _ = enroll(db, at=clock)
     step = login(db)
     with pytest.raises(HTTPException) as error:
-        auth.verify_mfa_login(auth.MfaLoginVerifyRequest(mfa_token=step["mfa_token"], code=pyotp.TOTP(secret).now()), db)
+        auth.verify_mfa_login(auth.MfaLoginVerifyRequest(mfa_token=step["mfa_token"], code=pyotp.TOTP(secret).at(clock)), db)
     assert error.value.status_code == 401
