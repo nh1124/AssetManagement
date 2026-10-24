@@ -419,6 +419,7 @@ REFUSED_ERROR = "ai_operation_refused"
 # decision (owner 2026-10-24); applying what a person approved stays open.
 _MCP_REFUSALS: tuple[tuple[str | None, re.Pattern, str], ...] = (
     ("PUT", re.compile(r"^/ai/(policies|execution-settings)/?$"), "ai_permissions"),
+    (None, re.compile(r"^/ai/mcp(/|$)"), "ai_connections"),
     ("POST", re.compile(r"^/ai/change-requests/\d+/(approve|reject)/?$"), "human_approval"),
     ("POST", re.compile(r"^/transactions/proposals/\d+/(approve|reject)/?$"), "human_approval"),
     (None, re.compile(r"^/auth(/|$)"), "account"),
@@ -427,6 +428,8 @@ _MCP_REFUSALS: tuple[tuple[str | None, re.Pattern, str], ...] = (
 REFUSAL_MESSAGES = {
     "ai_permissions": ("AI permissions are changed by a person in the app, not through MCP.",
                        "AI の権限（ポリシー・書き込み方式）は MCP からは変更できません。アプリで変更してください。"),
+    "ai_connections": ("AI app connections are seen and ended by a person in the app, not through MCP.",
+                       "AI アプリの接続は MCP からは見られず、切断もできません。アプリで操作してください。"),
     "human_approval": ("Approving or rejecting is a person's decision; do it in the app.",
                        "承認・却下は人が行います。アプリで操作してください。"),
     "account": ("Account operations are not available through MCP.",

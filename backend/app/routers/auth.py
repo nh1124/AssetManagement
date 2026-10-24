@@ -9,9 +9,9 @@ from .. import models
 from ..database import get_db
 from ..utils.jwt import create_access_token, create_typed_token, decode_token, decode_mcp_access_token, token_is_current
 from ..utils.password import verify_password, hash_password
-from ..dependencies import get_current_client, request_language, APPROVAL_PENDING
+from ..dependencies import get_current_client, request_language, APPROVAL_PENDING, MCP_CONNECTION_ENDED
 from ..domain.messages import Message, message_of, localize
-from ..services import client_service, mfa_service, system_settings_service
+from ..services import client_service, mcp_connection_service, mfa_service, system_settings_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 INVALID_TOKEN = Message("Invalid token", ja="サインインの有効期限が切れました。もう一度サインインしてください。")
@@ -269,6 +269,16 @@ def exchange_mcp_token(req: McpTokenExchangeRequest, db: Session = Depends(get_d
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Message("MFA setup required", ja="先にアプリで認証アプリを設定してください。"))
 
     mcp_client_id = str(payload.get("client_id") or "")
+    # The token names its connection (WP35); one the person ended, or a token from
+    # before connections were recorded, is refused here and at every backend request.
+    connection_id = payload.get("cid")
+    connection = (
+        mcp_connection_service.active_connection(db, connection_id, client.id)
+        if isinstance(connection_id, int) and not isinstance(connection_id, bool) else None
+    )
+    if connection is None or connection.oauth_client_id != mcp_client_id:
+        raise HTTPException(status_code=401, detail=MCP_CONNECTION_ENDED)
+    mcp_connection_service.record_use(db, connection)
     return {
         # chn=mcp binds the channel to the token: every request made with it is an AI
         # operation, gated and audited as one, whatever headers it carries (WP34).
@@ -277,7 +287,7 @@ def exchange_mcp_token(req: McpTokenExchangeRequest, db: Session = Depends(get_d
             username=client.name,
             token_type="access",
             expires_delta=timedelta(minutes=15),
-            extra_claims={"chn": "mcp", "mcp_client_id": mcp_client_id},
+            extra_claims={"chn": "mcp", "mcp_client_id": mcp_client_id, "cid": connection.id},
         ),
         "token_type": "bearer",
         "client_id": client.id,

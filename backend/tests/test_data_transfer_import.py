@@ -168,6 +168,13 @@ def _seed_installation_data(db):
         models.AdminAuditLog(admin_user_id=admin.id, actor=f"admin:{admin.id}", action="client.suspend",
                              target_client_id=101, detail={}, result="ok"),
         models.SystemSetting(key="registration_mode", value="approval", updated_by="cli:test"),
+        # An AI app's registration and the restoring client's connection to it (WP35).
+        models.McpOAuthClient(client_id="mcp_restore", redirect_uris=["http://localhost/callback"],
+                              grant_types=["authorization_code"], created_at=STAMP),
+        models.McpConnection(client_id=101, oauth_client_id="mcp_restore", client_source="dcr",
+                             redirect_uri="http://localhost/callback", scope="mcp", resource="http://localhost:13000/mcp",
+                             issuer="http://localhost:13000", auth_time_ms=1, allow_refresh=False,
+                             created_at=STAMP, activated_at=STAMP, expires_at=datetime(2030, 1, 1)),
     ])
     db.commit()
 

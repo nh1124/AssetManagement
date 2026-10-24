@@ -68,6 +68,42 @@ def decode_token(token: str) -> Optional[dict]:
         return None
 
 
+def create_mcp_access_token(
+    *,
+    username: str,
+    backend_client_id: int,
+    oauth_client_id: str,
+    scope: str,
+    auth_time_ms: int,
+    connection_id: int,
+    issuer: str,
+    resource: str,
+    expires_delta: timedelta,
+) -> str:
+    """The access token an AI app presents to the MCP server (WP35).
+
+    Signed with the MCP secret, addressed to the MCP resource and to the backend's
+    exchange. cid names the connection, so ending the connection refuses the token
+    at the next exchange or backend request.
+    """
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": username,
+        "type": "access",
+        "client_id": oauth_client_id,
+        "scope": scope,
+        "username": username,
+        "backend_client_id": backend_client_id,
+        "auth_time_ms": auth_time_ms,
+        "cid": connection_id,
+        "iss": issuer,
+        "aud": [resource, settings.mcp_token_audience] if resource else [settings.mcp_token_audience],
+        "iat": now,
+        "exp": now + expires_delta,
+    }
+    return jwt.encode(payload, settings.mcp_jwt_secret, algorithm=settings.jwt_algorithm)
+
+
 def decode_mcp_access_token(token: str) -> Optional[dict]:
     """Decode an MCP OAuth access token for backend token exchange."""
     try:

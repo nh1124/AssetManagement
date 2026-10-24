@@ -26,16 +26,18 @@ from backend.app.services.ai_policy_service import describe_mcp_request, replace
 from backend.app.utils.jwt import create_access_token, create_typed_token, decode_token
 from backend.app.utils.observability import install_db_audit
 from test_journal_legs_api import _client
-from test_mcp_token_exchange import _client as _mfa_client, _mcp_token, _session
+from test_mcp_token_exchange import _client as _mfa_client, _connect, _mcp_token, _session
 
 MCP_CLIENT = "mcp_wp34"
+# The connection the gateway fixture opens: an MCP token names one (WP35).
+MCP_CONNECTION = 77
 TOOL = {"X-MCP-Tool-Name": "transactions_create"}
 
 
 def _mcp_bearer(client) -> dict:
     token = create_typed_token(
         user_id=str(client.id), username=client.username, token_type="access",
-        extra_claims={"chn": "mcp", "mcp_client_id": MCP_CLIENT},
+        extra_claims={"chn": "mcp", "mcp_client_id": MCP_CLIENT, "cid": MCP_CONNECTION},
     )
     return {"Authorization": f"Bearer {token}"}
 
@@ -54,6 +56,7 @@ def gateway():
     install_db_audit(sessions)
     db = sessions()
     client = _client(db)
+    _connect(db, client.id, oauth_client_id=MCP_CLIENT, connection_id=MCP_CONNECTION)
     cash = models.Account(client_id=client.id, name="Cash", account_type="asset")
     food = models.Account(client_id=client.id, name="Food", account_type="expense")
     db.add_all([cash, food])
@@ -99,9 +102,8 @@ def test_exchanged_token_is_bound_to_the_mcp_channel():
     db = _session()
     try:
         client = _mfa_client(db, 1, "alice")
-        result = auth.exchange_mcp_token(
-            auth.McpTokenExchangeRequest(mcp_access_token=_mcp_token(username="alice", backend_client_id=client.id)), db,
-        )
+        token = _mcp_token(username="alice", backend_client_id=client.id, cid=_connect(db, client.id))
+        result = auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=token), db)
         payload = decode_token(result["access_token"])
         assert payload["chn"] == "mcp"
         assert payload["mcp_client_id"] == "mcp_test_client"

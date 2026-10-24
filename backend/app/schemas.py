@@ -152,6 +152,29 @@ class AiExecutionSettings(BaseModel):
     supported_change_request_operations: list[str] = Field(default_factory=list)
 
 
+class McpConnection(BaseModel):
+    """An AI app the person connected to the MCP server (WP35)."""
+    id: int
+    client_name: Optional[str] = None
+    oauth_client_id: str
+    # cimd: the app publishes its metadata at client_host; dcr: it registered with this server.
+    client_source: Literal["cimd", "dcr"]
+    client_host: Optional[str] = None
+    redirect_host: Optional[str] = None
+    scope: str
+    connected_at: datetime
+    last_used_at: Optional[datetime] = None
+    expires_at: datetime
+    refreshable: bool
+    # reconnect_required: a password change or a sign-out everywhere came after the sign-in.
+    status: Literal["active", "reconnect_required"]
+
+
+class McpConnections(BaseModel):
+    mcp_url: str
+    connections: list[McpConnection]
+
+
 class AiContextResourceDescriptor(BaseModel):
     resource: str
     title: str

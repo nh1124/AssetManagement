@@ -7,6 +7,7 @@ through Base, and this package registers every model before mapper configuration
 from ..database import Base
 from .admin import AdminUser, AdminUserPermission, AdminSession, AdminAuditLog, SystemSetting
 from .client import Client, ClientMfaSetting, ClientRecoveryCode
+from .mcp import McpOAuthClient, McpConnection
 from .ledger import AccountType, Account, JournalEntry, Transaction, TransactionProposal
 from .transaction_batch import TransactionBatch
 from .fx import ExchangeRate, FxTrackedCurrency
@@ -29,6 +30,8 @@ __all__ = [
     "Client",
     "ClientMfaSetting",
     "ClientRecoveryCode",
+    "McpOAuthClient",
+    "McpConnection",
     "AccountType",
     "Account",
     "JournalEntry",
