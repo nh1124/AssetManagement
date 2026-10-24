@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..domain.messages import Message, message_of
 from .. import models, schemas
 from ..database import get_db
-from ..dependencies import get_current_client
+from ..dependencies import get_current_client, mcp_client_id
 from ..services.ai_policy_service import assert_direct_ledger_write_allowed
 from ..services.ledger_service import list_proposals as list_proposals_service
 from ..services.cache_service import invalidate_client
@@ -121,7 +121,7 @@ def create_transaction(
     assert_direct_ledger_write_allowed(
         db,
         current_client.id,
-        mcp_client_id=request.headers.get("x-mcp-client-id") if request else None,
+        mcp_client_id=mcp_client_id(),
         risk="medium",
     )
     db_transaction = record_entry(db, current_client.id, transaction)
@@ -222,7 +222,7 @@ def update_transaction(
     assert_direct_ledger_write_allowed(
         db,
         current_client.id,
-        mcp_client_id=request.headers.get("x-mcp-client-id") if request else None,
+        mcp_client_id=mcp_client_id(),
         risk="medium",
     )
     try:
@@ -249,7 +249,7 @@ def delete_transaction(
     assert_direct_ledger_write_allowed(
         db,
         current_client.id,
-        mcp_client_id=request.headers.get("x-mcp-client-id") if request else None,
+        mcp_client_id=mcp_client_id(),
         risk="medium",
     )
     if not remove_entry(db, current_client.id, transaction_id):

@@ -27,16 +27,25 @@ _SAFE_ID = re.compile(r"[A-Za-z0-9._-]{8,64}")
 QUIET_PATHS = frozenset({"/health", "/health/ready"})
 
 
-def _actor_client_id(authorization: str | None) -> int | None:
+def _token_identity(authorization: str | None) -> tuple[int | None, str | None]:
+    """Who the bearer token is for, and the MCP client it was exchanged for, if any.
+
+    A token from /auth/mcp/exchange carries chn=mcp (WP34): the channel comes
+    from the token, so an MCP request cannot pass as a screen's by leaving out
+    a header.
+    """
     if not authorization or not authorization.lower().startswith("bearer "):
-        return None
+        return None, None
     payload = decode_token(authorization[7:].strip())
     if not payload or payload.get("type") != "access":
-        return None
+        return None, None
     try:
-        return int(payload.get("sub"))
+        actor = int(payload.get("sub"))
     except (TypeError, ValueError):
-        return None
+        return None, None
+    if payload.get("chn") != "mcp":
+        return actor, None
+    return actor, str(payload.get("mcp_client_id") or "") or "mcp"
 
 
 class RequestLogMiddleware:
@@ -55,11 +64,16 @@ class RequestLogMiddleware:
         }
         request_id = uuid.uuid4().hex
         incoming_id = headers.get("x-request-id", "")
-        mcp_client_id = headers.get("x-mcp-client-id") or None
+        actor_client_id, token_mcp_client = (
+            (None, None) if self.component == "admin" else _token_identity(headers.get("authorization"))
+        )
+        # The token decides when it can; the header still marks requests made with
+        # tokens issued before the claim existed.
+        mcp_client_id = token_mcp_client or headers.get("x-mcp-client-id") or None
         token = bind(RequestContext(
             request_id=request_id,
             correlation_id=incoming_id if _SAFE_ID.fullmatch(incoming_id) else request_id,
-            actor_client_id=None if self.component == "admin" else _actor_client_id(headers.get("authorization")),
+            actor_client_id=actor_client_id,
             channel="mcp" if mcp_client_id else "ui",
             mcp_client_id=mcp_client_id,
             mcp_tool=headers.get("x-mcp-tool-name") or None,

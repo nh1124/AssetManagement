@@ -143,7 +143,7 @@ def delete_capsule(
 
 def _ledger_write(db: Session, client_id: int, request: Request | None) -> None:
     """Drawdowns, claim adjustments and contributions post journal legs: an AI needs the direct-write policy."""
-    assert_direct_ledger_write_allowed(db, client_id, mcp_client_id=request.headers.get("x-mcp-client-id") if request else None)
+    assert_direct_ledger_write_allowed(db, client_id, mcp_client_id=dependencies.mcp_client_id())
 
 
 @router.post("/{capsule_id}/drawdown", response_model=schemas.CapsuleDrawdownResult)

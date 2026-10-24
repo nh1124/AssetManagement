@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..dependencies import get_current_client, request_language
+from ..dependencies import get_current_client, mcp_client_id, request_language
 from ..domain.messages import localize
 from ..services.ai_policy_service import assert_direct_ledger_write_allowed
 from ..workflows import depreciation_workflow as workflow
@@ -36,7 +36,7 @@ def record(
     request: Request = None,
 ):
     assert_direct_ledger_write_allowed(
-        db, current_client.id, mcp_client_id=request.headers.get("x-mcp-client-id") if request else None, risk="medium",
+        db, current_client.id, mcp_client_id=mcp_client_id(), risk="medium",
     )
     return _row(workflow.record(db, current_client.id, payload))
 
@@ -50,6 +50,6 @@ def amend(
     request: Request = None,
 ):
     assert_direct_ledger_write_allowed(
-        db, current_client.id, mcp_client_id=request.headers.get("x-mcp-client-id") if request else None, risk="medium",
+        db, current_client.id, mcp_client_id=mcp_client_id(), risk="medium",
     )
     return _row(workflow.amend(db, current_client.id, depreciation_id, payload))

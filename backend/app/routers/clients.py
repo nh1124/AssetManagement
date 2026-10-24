@@ -4,7 +4,8 @@ from typing import List
 from ..domain.messages import Message
 from .. import models
 from ..database import get_db
-from ..dependencies import get_current_client
+from ..dependencies import get_current_client, mcp_client_id
+from ..services.ai_policy_service import mcp_refusal_error
 from ..services.cache_service import invalidate_client
 from ..services.client_settings_service import merge_general_settings
 from pydantic import BaseModel
@@ -49,6 +50,9 @@ def update_client_settings(
 ):
     if current_client.id != client_id:
         raise HTTPException(status_code=403, detail=Message("Cannot edit another client settings", ja="ほかのクライアントの設定は変更できません。"))
+    # The write mode lives in these settings; the AI must not be able to widen its own (WP34).
+    if mcp_client_id() and "ai_operation" in (payload.general_settings or {}):
+        raise mcp_refusal_error("ai_permissions")
     settings = merge_general_settings(db, current_client, payload.general_settings)
     invalidate_client(current_client.id)
     return settings

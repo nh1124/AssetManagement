@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..dependencies import get_current_client
+from ..dependencies import get_current_client, mcp_client_id as request_mcp_client_id
 from ..domain.errors import NotFound, Refused, detail_for, status_for
 from ..services.ai_context_service import (
     get_context_resource,
@@ -16,6 +16,7 @@ from ..services.ai_policy_service import (
     evaluate_ai_operation,
     list_audit_logs,
     list_client_policies,
+    mcp_write_mode_of,
     replace_client_policies,
     write_ai_audit_log,
 )
@@ -33,13 +34,8 @@ SUPPORTED_CHANGE_REQUEST_OPERATIONS = [
 
 
 def _execution_settings_payload(current_client: models.Client) -> dict:
-    general = current_client.general_settings or {}
-    ai_operation = general.get("ai_operation") if isinstance(general.get("ai_operation"), dict) else {}
-    mode = ai_operation.get("mcp_write_mode") or "direct_write"
-    if mode not in {"direct_write", "change_request"}:
-        mode = "direct_write"
     return {
-        "mcp_write_mode": mode,
+        "mcp_write_mode": mcp_write_mode_of(current_client.general_settings),
         "supported_change_request_operations": SUPPORTED_CHANGE_REQUEST_OPERATIONS,
     }
 
@@ -161,7 +157,8 @@ def evaluate_ai_operation_api(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    mcp_client_id = payload.mcp_client_id or request.headers.get("x-mcp-client-id")
+    # The token-bound client wins over whatever the payload names (WP34).
+    mcp_client_id = request_mcp_client_id() or payload.mcp_client_id
     tool_name = payload.tool_name or request.headers.get("x-mcp-tool-name")
     source = "mcp_http" if mcp_client_id and payload.source == "backend" else payload.source
     context = AiOperationContext(
@@ -200,7 +197,7 @@ def _ensure_context_read_allowed(
     limit: int | None = None,
     period: str | None = None,
 ) -> tuple[AiOperationContext, AiOperationDecision]:
-    mcp_client_id = request.headers.get("x-mcp-client-id")
+    mcp_client_id = request_mcp_client_id()
     source = "mcp_http" if mcp_client_id else "backend"
     context = AiOperationContext(
         source=source,

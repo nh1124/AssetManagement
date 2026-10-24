@@ -70,6 +70,14 @@ class AiAuditLog(Base):
     ip_address = Column(String, nullable=True)
     user_agent = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # WP34: what let the operation through (read / direct_policy / direct_mode /
+    # change_request / human_approved) or stopped it (refused_* / failed).
+    authorization = Column(String, nullable=True)
+    http_status = Column(Integer, nullable=True)
+    # The backend request and the MCP tool call it belongs to: the keys into the
+    # administrator's logs, and what the restore from those logs deduplicates on.
+    request_id = Column(String, nullable=True, index=True)
+    correlation_id = Column(String, nullable=True, index=True)
 
     client = relationship("Client", back_populates="ai_audit_logs", foreign_keys=[client_id])
 

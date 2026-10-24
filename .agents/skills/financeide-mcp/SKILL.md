@@ -38,7 +38,8 @@ FinanceIDE MCP（backend `/` FastAPI の facade）を通じてユーザーの実
 4. **1 回の支払いが複数科目に分かれる場合は `legs` を使う**（取引を 2 件に分けない）。立替込みの食事なら、貸方にカード 1 本、借方に 食費 と 立替科目。
    - 誰への立替かは**勘定科目で表す**（`立替 / 友人A` を asset 科目として作る）。貸している額はその科目の残高そのもので、回収は その科目 → 現金 の Transfer 1 本。
    - `amount` は支払総額のまま。各レグはその内訳で、合計が `amount` に一致しないと拒否される。
-5. **change request モード**: AI 実行設定によっては write ツールが直接書き込まず `ai_change_requests` を作成する。その場合は preview 内容を報告し、ユーザーの approve / apply（ApprovalInbox または `ai_change_requests_approve/apply`）を待つ。勝手に approve しない。
+5. **change request モード**: AI 実行設定によっては write ツールが直接書き込まず `ai_change_requests` を作成する。その場合は preview 内容を報告し、ユーザーが画面（ApprovalInbox）で承認するのを待つ。承認・却下は人だけ（MCP からは 403）。人が承認したものは `ai_change_requests_apply` で適用できる。
+   - MCP 経由の操作はすべて AI 監査ログに残る（読み取りも直接書き込みも。許可の根拠つき）。
 6. 書き込み後は必ず読み直して検証する（作成 ID を `transactions_list` 等で再取得）。mutation のレスポンスだけで成功を報告しない。
 
 ## 3. 自動取引が正（source of truth）

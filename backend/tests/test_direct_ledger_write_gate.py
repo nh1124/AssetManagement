@@ -66,11 +66,14 @@ def http_ledger():
 
 def _snapshot(db):
     # Counts alone miss edits to journal legs, balances, or existing proposals.
+    # The AI audit is left out: it records the refused attempt (WP34), which
+    # test_wp34_ai_operation_audit checks; nothing else may change.
     state = {
         table.name: [dict(row) for row in db.execute(
             select(table).order_by(*table.primary_key.columns),
         ).mappings()]
         for table in Base.metadata.tables.values()
+        if table.name != "ai_audit_logs"
     }
     return json.dumps(state, sort_keys=True, default=str).encode("utf-8")
 
