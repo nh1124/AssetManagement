@@ -179,17 +179,24 @@ def test_recovery_code_can_be_used_only_once(db):
 
 @pytest.mark.parametrize("use_recovery", [False, True])
 def test_replacement_preserves_old_factor_until_verified_and_revokes_tokens(db, use_recovery, monkeypatch):
-    old_secret, completed = enroll(db)
-    client = db.get(models.Client, 1)
-    old_token = older_token(client)
-    # Make the old/new code sets distinct across the test's verification window.
-    now = datetime.now(timezone.utc)
+    # Pin the clock from enrollment on: across a TOTP step boundary after enrollment
+    # the old code below would legitimately be new and inside the verification window.
+    now = datetime(2026, 10, 22, 12, 0, 0, tzinfo=timezone.utc)
     verification_time = now + timedelta(seconds=30)
+    clock = [now]
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):
-            return verification_time if tz else verification_time.replace(tzinfo=None)
+            return clock[0] if tz else clock[0].replace(tzinfo=None)
+        @classmethod
+        def utcnow(cls):
+            return clock[0].replace(tzinfo=None)
     monkeypatch.setattr(mfa_service, "datetime", Clock)
+    old_secret, completed = enroll(db, at=now)
+    clock[0] = verification_time
+    client = db.get(models.Client, 1)
+    old_token = older_token(client)
+    # Make the old/new code sets distinct across the test's verification window.
     old_codes = {pyotp.TOTP(old_secret).at(now, counter_offset=offset) for offset in range(-2, 3)}
     candidate = pyotp.random_base32()
     while old_codes & {pyotp.TOTP(candidate).at(now, counter_offset=offset) for offset in range(-2, 3)}:
@@ -201,7 +208,7 @@ def test_replacement_preserves_old_factor_until_verified_and_revokes_tokens(db, 
     assert setup["manual_entry_key"] != old_secret
     setting = mfa_service.get_mfa_setting(db, client)
     assert setting.pending_totp_secret_encrypted and decrypt_key(setting.totp_secret_encrypted) == old_secret
-    assert not mfa_service.verify_mfa_factor(db, client, code=pyotp.TOTP(old_secret).now())
+    assert not mfa_service.verify_mfa_factor(db, client, code=pyotp.TOTP(old_secret).at(now))
     assert mfa_service.verify_mfa_factor(db, client, recovery_code=completed["recovery_codes"][2])
     assert not mfa_service.verify_mfa_factor(db, client, code="invalid")
     with pytest.raises(HTTPException) as replay:
@@ -213,7 +220,7 @@ def test_replacement_preserves_old_factor_until_verified_and_revokes_tokens(db, 
     assert setting.pending_totp_secret_encrypted is None
     assert decrypt_key(setting.totp_secret_encrypted) == setup["manual_entry_key"]
     assert not mfa_service.verify_mfa_factor(db, client, code=new_code)
-    assert not mfa_service.verify_totp_code(setting, pyotp.TOTP(old_secret).now())
+    assert not mfa_service.verify_totp_code(setting, pyotp.TOTP(old_secret).at(verification_time))
     assert set(replaced["recovery_codes"]).isdisjoint(completed["recovery_codes"])
     assert not mfa_service.verify_mfa_factor(db, client, recovery_code=completed["recovery_codes"][1])
     with pytest.raises(HTTPException) as error:
