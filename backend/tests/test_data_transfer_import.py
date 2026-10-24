@@ -71,7 +71,6 @@ def _seed(db, client_id=101, base=10000):
         rows.setdefault(model.__tablename__, []).append(row)
         return row
 
-    add(models.PeriodClose, 30, period="2026-10", closed_at=STAMP, note="reviewed")
     parent = add(models.Account, 1, name="assets", account_type="asset")
     cash = add(models.Account, 2, name="cash", account_type="asset")
     expense = add(models.Account, 3, name="food", account_type="expense")

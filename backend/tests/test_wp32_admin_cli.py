@@ -1,5 +1,4 @@
 """Injected CLI tests, including the useful retired WP30 maintenance cases."""
-from datetime import date, datetime, timedelta
 from io import StringIO
 import json
 
@@ -13,7 +12,7 @@ from app.domain.admin_permissions import ALL_PERMISSIONS, PRESETS
 from app.services import admin_auth_service as admins, admin_audit_service as audit, system_settings_service as settings
 from app.workflows import admin_account_workflow as workflow
 
-from test_wp30_release_phase0 import db, seed_issues, snapshot  # noqa: F401
+from test_wp30_release_phase0 import capsule_without_account, db, seed_issues, snapshot  # noqa: F401
 
 
 def run(db, argv, *, answers=(), passwords=()):
@@ -171,12 +170,11 @@ def test_health_all_clients_summary_includes_inactive_and_only_adds_audit(db):
 def test_health_single_client_caps_sample_items_but_preserves_count(db):
     seed_issues(db)
     for i in range(25):
-        db.add(models.Transaction(client_id=1, date=date(2026, 9, 21), description=f"Late {i}",
-                                  amount_minor=100, created_at=datetime(2026, 10, 3)))
+        db.add_all(capsule_without_account(10 + i, f"Earmark {i}"))
     db.commit()
     status, output, _ = run(db, ["health", "check", "--client", "1", "--json"])
-    late = next(row for row in json.loads(output)["issues"] if row["code"] == "entries_in_a_closed_period")
-    assert status == 0 and late["count"] == 26 and len(late["items"]) == 20
+    earmarks = next(row for row in json.loads(output)["issues"] if row["code"] == "capsule_without_account")
+    assert status == 0 and earmarks["count"] == 26 and len(earmarks["items"]) == 20
 
 
 def test_settings_json_string_validation_and_audit_tail(db):

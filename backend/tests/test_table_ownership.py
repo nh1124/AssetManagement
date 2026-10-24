@@ -28,7 +28,6 @@ OWNERS: dict[str, str] = {
     "registry_entries": "services/registry_service",
     "budget_plans": "services/budget_plan_store",
     "monthly_plan_lines": "services/budget_plan_store",
-    "period_closes": "services/period_close_service",
     "period_reviews": "services/period_review_service",
     "capsules": "services/capsule_service",
     "capsule_drawdowns": "services/capsule_service",

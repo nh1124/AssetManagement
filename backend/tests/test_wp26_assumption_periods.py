@@ -89,7 +89,7 @@ def test_a_duplicate_copies_the_records_and_the_backup_carries_them(db):
     assert [(row["start_period"], row["annual_return"], row["inflation"]) for row in scenarios.describe(db, 1, copy)["assumption_periods"]] == [
         (NEXT_YEAR, 4.0, 1.5)]
     document = export_client(db, db.get(models.Client, 1))
-    assert document["version"] == 31
+    assert document["version"] == 32
     assert len(document["data"]["scenario_assumption_periods"]) == 2
     result = import_client(db, db.get(models.Client, 3), data=document["data"], version=document["version"], manifest=document["manifest"])
     assert result["status"] == "ok"

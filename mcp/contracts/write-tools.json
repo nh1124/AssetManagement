@@ -596,24 +596,6 @@
     "path_fragment": "api.delete<unknown>(`/plan/records/${recordId}`"
   },
   {
-    "tool": "period_closes_close",
-    "method": "post",
-    "path": "/period-closes",
-    "body": "object",
-    "source": "src/tools/ui-operations.ts",
-    "path_fragment": "api.post<unknown>(\"/period-closes\"",
-    "allowed_fields": ["period", "note"],
-    "required_fields": ["period"]
-  },
-  {
-    "tool": "period_closes_reopen",
-    "method": "delete",
-    "path": "/period-closes/{period}",
-    "body": "none",
-    "source": "src/tools/ui-operations.ts",
-    "path_fragment": "/period-closes/${period}"
-  },
-  {
     "tool": "capsules_contribute",
     "method": "post",
     "path": "/capsules/{capsule_id}/contribute",

@@ -1,6 +1,5 @@
 import axios from 'axios';
 import { activeLanguage } from '../studio/i18n';
-import type { TransactionWithPeriodClose } from './periodCloses';
 import type {
     ApprovalPendingResult,
     Account,
@@ -420,7 +419,7 @@ export const rejectTransactionProposal = async (id: number, note?: string): Prom
     return response.data;
 };
 
-export const createTransaction = async (transaction: Omit<Transaction, 'id'>): Promise<TransactionWithPeriodClose> => {
+export const createTransaction = async (transaction: Omit<Transaction, 'id'>): Promise<Transaction> => {
     const response = await api.post('/transactions/', transaction);
     return response.data;
 };
@@ -428,7 +427,7 @@ export const createTransaction = async (transaction: Omit<Transaction, 'id'>): P
 export const updateTransaction = async (
     id: number,
     transaction: Partial<Omit<Transaction, 'id'>>
-): Promise<TransactionWithPeriodClose> => {
+): Promise<Transaction> => {
     const response = await api.put(`/transactions/${id}`, transaction);
     return response.data;
 };

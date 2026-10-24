@@ -13,22 +13,19 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
 from ..services import (
     ai_change_request_store, data_health_service, ledger_service,
-    notification_service, period_close_service,
+    notification_service,
 )
 from ..services.client_settings_service import client_language, pick
-from ..services.periods import add_months, period_to_range
 from ..services import goal_budget_record, goal_plan_service
 
 APPROVAL_PENDING = "approval_pending"
 UNMATCHED = "unmatched"
 DATA_HEALTH = "data_health"
-MONTH_CLOSE = "month_close"
 # Longer lists end in a count; the screen the notification opens has the rest.
 BODY_LINES = 10
 
@@ -74,11 +71,6 @@ DATA_HEALTH_TEXT = {
         ("取り置いた分まで使っています。資産 › 口座で確保額を減らすか、口座にお金を戻してください。", "Money set aside has been spent. Reduce what is set aside under Assets › Accounts, or move money back into the account."),
         "/assets/accounts",
     ),
-    "entries_in_a_closed_period": (
-        ("締めた月に後から記録した取引があります（{n}件）", "Entries added to a closed month ({n})"),
-        ("内容を確認したら、その月の締めをやり直してください（締めを外して、もう一度締める）。", "Check them, then redo the month's close (reopen it and close it again)."),
-        "/ledger",
-    ),
     "capsule_without_account": (
         ("確保する口座が決まっていない取り置きがあります（{n}件）", "Earmarks without a funding account ({n})"),
         ("取り置きを開いて、確保する口座を設定してください。口座が決まるまで規則は何も確保しません。", "Open the earmark and choose the account it is set aside in. Its rules reserve nothing until then."),
@@ -108,7 +100,6 @@ DATA_HEALTH_TEXT = {
 
 
 DATA_HEALTH_ITEMS = {
-    "entries_in_a_closed_period": ("transaction_id", "{date} {description}", "{date} {description}"),
     "account_earmarked_beyond_its_balance": ("account_id", "{account_name}", "{account_name}"),
     "capsule_without_account": ("capsule_id", "{name}", "{name}"),
     "capsule_claim_negative_on_account": ("capsule_id", "{name}（{account_name}）", "{name} ({account_name})"),
@@ -128,7 +119,6 @@ def data_health_notifications(db: Session, client_id: int, period: str) -> list[
         code = issue["code"]
         titles, leads, link = DATA_HEALTH_TEXT[code]
         items = issue["items"]
-        closed = code == "entries_in_a_closed_period"
         id_field, ja_line, en_line = DATA_HEALTH_ITEMS[code]
         ids = [item[id_field] for item in items]
         lines = [
@@ -138,31 +128,11 @@ def data_health_notifications(db: Session, client_id: int, period: str) -> list[
         ]
         reasons = [f"{code}:{issue['fingerprint']}"]
         payload = {"code": code, "ids": ids, "count": issue["count"]}
-        if closed:
-            earliest = min(item["period"] for item in items)
-            link += f"?month={earliest}"
-            payload["period"] = earliest
         notifications += _notification(
             DATA_HEALTH, reasons, pick(language, *titles).format(n=issue["count"]),
             lines, link, payload, language, lead=pick(language, *leads),
         )
     return notifications
-
-
-def month_close_notifications(db: Session, client_id: int, period: str) -> list[dict]:
-    """The month before `period` is over but not closed; a month with no entries has nothing to confirm."""
-    previous = add_months(period, -1)
-    start, end = period_to_range(previous)
-    if period_close_service.is_closed(db, client_id, previous):
-        return []
-    rows, _ = ledger_service.list_transactions(db, client_id, start_date=start, end_date=end - timedelta(days=1), limit=1)
-    if not rows:
-        return []
-    # The ledger month view holds the close; the link opens that month.
-    language = client_language(db, client_id)
-    return _notification(MONTH_CLOSE, [previous], pick(language, f"{previous} が締められていません", f"{previous} is not closed"),
-                         [pick(language, "記録を確認して月を締めてください。", "Check the records and close the month.")],
-                         f"/ledger?month={previous}", {"period": previous}, language)
 
 
 GENERATORS: dict[str, Callable[[Session, int, str], list[dict]]] = {
@@ -171,7 +141,6 @@ GENERATORS: dict[str, Callable[[Session, int, str], list[dict]]] = {
     APPROVAL_PENDING: approval_notifications,
     UNMATCHED: unmatched_notifications,
     DATA_HEALTH: data_health_notifications,
-    MONTH_CLOSE: month_close_notifications,
 }
 
 

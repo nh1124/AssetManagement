@@ -50,7 +50,6 @@ def issue_fingerprint(items: list[dict]) -> str:
 
 USER_CODES = frozenset({
     "account_earmarked_beyond_its_balance",
-    "entries_in_a_closed_period",
     "capsule_without_account",
     "capsule_claim_negative_on_account",
     "capsule_beyond_its_declared_share",
@@ -620,27 +619,9 @@ def _capsule_funding_issues(db: Session, client_id: int) -> list[dict[str, Any]]
     } for code, severity, title, detail, items in checks]
 
 
-def _entries_in_closed_periods(db: Session, client_id: int) -> list[dict]:
-    items = []
-    for close in db.query(models.PeriodClose).filter_by(client_id=client_id).order_by(models.PeriodClose.period):
-        start, end = period_to_range(close.period)
-        for tx in db.query(models.Transaction).filter(
-            models.Transaction.client_id == client_id,
-            models.Transaction.date >= start, models.Transaction.date < end,
-            models.Transaction.created_at > close.closed_at,
-        ).order_by(models.Transaction.date, models.Transaction.id):
-            items.append({
-                "transaction_id": tx.id, "date": tx.date.isoformat(),
-                "description": tx.description, "period": close.period,
-                "created_at": tx.created_at.isoformat(), "closed_at": close.closed_at.isoformat(),
-            })
-    return items
-
-
 # Issue titles in the client's language for API and maintenance consumers.
 TITLES: dict[str, tuple[str, str]] = {
     "account_earmarked_beyond_its_balance": ("口座の残高を超えて取り置いている", "Account holds less than its earmarks"),
-    "entries_in_a_closed_period": ("締め後に記録された取引", "Transactions recorded after a close"),
     "capsule_without_account": ("資金元の口座がない取り置きの規則", "Capsule rules without a reservation account"),
     "capsule_claim_negative_on_account": ("口座での取り置きの確保額がマイナス", "Capsule claim is negative on an account"),
     "capsule_beyond_its_declared_share": ("取り置きの確保額が持ち分を超えている", "Capsule claim exceeds its declared share"),
@@ -690,14 +671,7 @@ def check_data_health(db: Session, client_id: int, *, audience: str | None = Non
         .all()
     ]
 
-    late_entries = _entries_in_closed_periods(db, client_id)
     issues = [
-        {
-            "code": "entries_in_a_closed_period", "severity": "warning",
-            "title": "締め後に記録された取引",
-            "detail": "締め済みの月に、締め日時より後で作成された取引があります。締めは目印であり、修正は可能です。",
-            "count": len(late_entries), "repairable": False, "items": late_entries,
-        },
         {
             "code": "capsule_without_account",
             "severity": "warning",

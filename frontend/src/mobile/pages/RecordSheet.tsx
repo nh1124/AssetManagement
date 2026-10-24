@@ -130,10 +130,11 @@ export default function RecordSheet({ transaction, onClose, onSaved }: { transac
         setError('');
         try {
             const payload = { date, amount: value, description: description.trim(), currency, legs };
-            const result = transaction ? await updateTransaction(transaction.id, payload) : await createTransaction(payload);
+            if (transaction) await updateTransaction(transaction.id, payload);
+            else await createTransaction(payload);
             if (subject !== null) store(RECENT_KEY, [subject, ...recent.filter((id) => id !== subject)].slice(0, 12));
             if (kind === 'expense' && from !== null) store(FROM_KEY, from);
-            snack(`${transaction ? tr('記録を更新しました', 'Record updated') : tr('記録しました', 'Recorded')}${result.closed_period ? tr(`（${result.closed_period} は締め済みです）`, ` (${result.closed_period} is closed)`) : ''}`);
+            snack(transaction ? tr('記録を更新しました', 'Record updated') : tr('記録しました', 'Recorded'));
             onSaved();
         } catch (failure) {
             setError(assetErrorMessage(failure));

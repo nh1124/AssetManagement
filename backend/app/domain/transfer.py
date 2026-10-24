@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 31
+EXPORT_VERSION = 32
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -29,7 +29,6 @@ DATA_COLLECTIONS = [
     "budget_plans",
     "monthly_plan_lines",
     "period_reviews",
-    "period_closes",
     "capsules",
     "capsule_drawdowns",
     "capsule_funding_sources",
@@ -45,7 +44,7 @@ DATA_COLLECTIONS = [
 RETIRED_COLLECTIONS = {"recurring_transactions": 24, "life_scenario_choices": 22, "quick_templates": None,
                        "life_scenario_account_returns": 26, "milestones": 26, "simulation_scenarios": 26, "goal_baselines": 26,
                        "goal_event_earmarks": 27, "life_event_fundings": 29,
-                       "monthly_actions": 31}
+                       "monthly_actions": 31, "period_closes": 32}
 
 
 def _retired(version: int | None) -> set[str]:
@@ -435,23 +434,6 @@ def validate_import_payload(
                 ready.append(target)
     if visited != len(indegree):
         issue("error", "event_link_cycle", "Event links must not contain a cycle.", "life_event_links")
-
-    closed_periods = set()
-    for item in data.get("period_closes", []):
-        period = item.get("period")
-        valid_period = isinstance(period, str) and re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", period) and period[:4] != "0000"
-        if not valid_period:
-            issue("error", "invalid_period", "Period must be a valid YYYY-MM.", "period_closes", item.get("id"), "period")
-        elif period in closed_periods:
-            issue("error", "duplicate_period_close", "A month can be closed only once.", "period_closes", item.get("id"), "period")
-        if isinstance(period, str):
-            closed_periods.add(period)
-        try:
-            closed_at = parse_datetime(item.get("closed_at"))
-            if closed_at is None or closed_at.tzinfo is not None:
-                raise ValueError("closed_at must be a naive UTC timestamp")
-        except (TypeError, ValueError):
-            issue("error", "invalid_closed_at", "closed_at must be a UTC timestamp without an offset.", "period_closes", item.get("id"), "closed_at")
 
     drawdown_pairs = set()
     for item in data.get("capsule_drawdowns", []):

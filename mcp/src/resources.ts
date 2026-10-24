@@ -126,7 +126,7 @@ Treat these as high-risk:
 - Active automatic transactions post on due dates.
 - plan_reflection_run / plan_reflection_settings_update: rewrite this month and the 11 after it from the goal and the product earmarks (preview first).
 - reconcile_adjust, capsules_drawdown, capsules_set_account_claim: change journal entries or what earmarks hold.
-- life_scenarios_delete, plan_records_delete, period_closes_reopen.
+- life_scenarios_delete, plan_records_delete.
 
 For high-risk operations, explain the expected effect, call preview/list tools first, and require explicit user confirmation.`,
   },

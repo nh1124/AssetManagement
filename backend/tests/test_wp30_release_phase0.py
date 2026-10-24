@@ -2,7 +2,7 @@
 import hashlib
 import importlib.util
 import json
-from datetime import date, datetime, timedelta
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -41,15 +41,25 @@ def db():
     engine.dispose()
 
 
-def seed_issues(db):
-    closed_at = datetime(2026, 10, 1)
-    db.add_all([
-        models.Capsule(id=1, client_id=1, name="Travel", target_amount_minor=1000),
-        models.CapsuleRule(client_id=1, capsule_id=1, destination_account_id=1,
+def capsule_without_account(capsule_id, name):
+    return [
+        models.Capsule(id=capsule_id, client_id=1, name=name, target_amount_minor=1000),
+        models.CapsuleRule(client_id=1, capsule_id=capsule_id, destination_account_id=1,
                            trigger_type="Income", amount_type="fixed", amount_minor=100, is_active=True),
-        models.PeriodClose(client_id=1, period="2026-09", closed_at=closed_at),
-        models.Transaction(id=1, client_id=1, date=date(2026, 9, 20), description="Late entry",
-                           amount_minor=100, created_at=closed_at + timedelta(days=1)),
+    ]
+
+
+def capsule_short_of_target(capsule_id, name):
+    return [
+        models.Capsule(id=capsule_id, client_id=1, name=name, target_amount_minor=1000),
+        models.CapsuleFundingSource(client_id=1, capsule_id=capsule_id, account_id=1, target_amount_minor=500),
+    ]
+
+
+def seed_issues(db):
+    db.add_all([
+        *capsule_without_account(1, "Travel"),
+        *capsule_short_of_target(2, "Home"),
         # An admin-only duplicate issue coexists with the two user-facing issues.
         *[models.MonthlyPlanLine(client_id=1, target_period="2026-09", line_type="income",
                                 name="Duplicate", amount_minor=100, identity_key="") for _ in range(2)],
@@ -65,7 +75,7 @@ def snapshot(db):
 def test_audience_and_summary_use_only_returned_issues(db):
     seed_issues(db)
     expected = frozenset({
-        "entries_in_a_closed_period", "capsule_without_account", "capsule_claim_negative_on_account",
+        "capsule_without_account", "capsule_claim_negative_on_account",
         "capsule_beyond_its_declared_share", "capsule_plan_does_not_total_its_target",
         "capsule_funding_account_is_inactive",
         "account_earmarked_beyond_its_balance",
@@ -133,7 +143,7 @@ def test_spent_earmarked_money_notifies_per_account(db, language, title, lead, i
 def test_two_user_notifications_and_old_notification_resolves_on_sync(db):
     seed_issues(db)
     old_key = "data_health:" + hashlib.sha256(json.dumps(
-        sorted(["entries_in_a_closed_period", "capsule_without_account", "duplicate_plan_lines"])
+        sorted(["capsule_plan_does_not_total_its_target", "capsule_without_account", "duplicate_plan_lines"])
     ).encode()).hexdigest()[:16]
     notification_service.sync(db, 1, "data_health", [{
         "dedupe_key": old_key, "title": "Old", "body": "Old aggregate", "payload": {},
@@ -146,15 +156,15 @@ def test_two_user_notifications_and_old_notification_resolves_on_sync(db):
     rows = db.query(models.Notification).filter_by(kind="data_health", status="open").all()
     assert len(rows) == 2
     by_code = {row.payload["code"]: row for row in rows}
-    late = by_code["entries_in_a_closed_period"]
+    short = by_code["capsule_plan_does_not_total_its_target"]
     earmark = by_code["capsule_without_account"]
-    assert late.link == "/ledger?month=2026-09"
-    assert late.title == "締めた月に後から記録した取引があります（1件）"
-    assert late.body.splitlines() == [
-        "内容を確認したら、その月の締めをやり直してください（締めを外して、もう一度締める）。",
-        "2026-09-20 Late entry",
+    assert short.link == "/db/earmarks"
+    assert short.title == "資金元の額の合計が目標額と合わない取り置きがあります（1件）"
+    assert short.body.splitlines() == [
+        "目標額を変えたときは、資金元の額も合わせてください。",
+        "Home",
     ]
-    assert late.payload == {"code": "entries_in_a_closed_period", "ids": [1], "period": "2026-09", "count": 1}
+    assert short.payload == {"code": "capsule_plan_does_not_total_its_target", "ids": [2], "count": 1}
     assert earmark.link == "/db/earmarks"
     assert earmark.title == "確保する口座が決まっていない取り置きがあります（1件）"
     assert earmark.body.splitlines() == [
@@ -167,7 +177,7 @@ def test_two_user_notifications_and_old_notification_resolves_on_sync(db):
 def test_admin_only_issues_never_notify(db):
     seed_issues(db)
     db.query(models.CapsuleRule).delete()
-    db.query(models.PeriodClose).delete()
+    db.query(models.CapsuleFundingSource).delete()
     db.commit()
     assert any(i["count"] for i in health.check_data_health(db, 1)["issues"])
     assert notifications.data_health_notifications(db, 1, "2026-10") == []
@@ -182,12 +192,11 @@ def test_health_dismissal_holds_and_new_item_notifies(db):
         notification_service.decide(db, row, "dismiss")
     notification_service.sync(db, 1, "data_health", notifications.data_health_notifications(db, 1, "2026-10"))
     assert notification_service.visible(db, 1) == []
-    db.add(models.Transaction(client_id=1, date=date(2026, 9, 21), description="Another",
-                              amount_minor=100, created_at=datetime(2026, 10, 3)))
+    db.add_all(capsule_short_of_target(3, "Car"))
     db.flush()
     notification_service.sync(db, 1, "data_health", notifications.data_health_notifications(db, 1, "2026-10"))
     (new,) = notification_service.visible(db, 1)
-    assert new.payload["code"] == "entries_in_a_closed_period"
+    assert new.payload["code"] == "capsule_plan_does_not_total_its_target"
     assert new.payload["count"] == 2
 
 
@@ -195,10 +204,7 @@ def test_health_dismissal_holds_and_new_item_notifies(db):
 @pytest.mark.parametrize("code", sorted(health.USER_CODES))
 def test_each_health_message_preserves_lead_count_and_language(db, monkeypatch, language, code):
     db.get(models.Client, 1).general_settings = {"language": language}
-    if code == "entries_in_a_closed_period":
-        items = [{"transaction_id": i, "date": "2026-09-01", "description": "Entry",
-                  "period": "2026-09" if i % 2 else "2026-08"} for i in range(1, 101)]
-    elif code == "account_earmarked_beyond_its_balance":
+    if code == "account_earmarked_beyond_its_balance":
         items = [{"account_id": i, "account_name": f"Bank {i}", "currency": "JPY",
                   "capsules": [{"capsule_id": 1000 + i, "name": f"Earmark {i}"}]} for i in range(1, 101)]
     else:
@@ -220,11 +226,7 @@ def test_each_health_message_preserves_lead_count_and_language(db, monkeypatch, 
     assert len(lines) == notifications.BODY_LINES + 2
     assert lines[-1] == ("and 90 more" if index else "ほか90件")
     assert row["payload"]["count"] == 105
-    if code == "entries_in_a_closed_period":
-        assert row["link"] == "/ledger?month=2026-08"
-        assert row["payload"]["period"] == "2026-08"
-        assert lines[1] == "2026-09-01 Entry"
-    elif code == "account_earmarked_beyond_its_balance":
+    if code == "account_earmarked_beyond_its_balance":
         assert row["link"] == "/assets/accounts"
         assert lines[1] == "Bank 1"
         assert row["payload"]["ids"] == list(range(1, 101))
@@ -307,24 +309,20 @@ def test_seed_migration_guarded_sql(direction, guard):
 
 
 def test_unsampled_health_identity_changes_fingerprint_and_notification(db):
-    db.add(models.PeriodClose(client_id=1, period="2026-09", closed_at=datetime(2026, 10, 1)))
-    db.add_all([
-        models.Transaction(id=i, client_id=1, date=date(2026, 9, 20), description=f"Entry {i}",
-                           amount_minor=100, created_at=datetime(2026, 10, 2))
-        for i in range(1, 102)
-    ])
+    for i in range(1, 102):
+        db.add_all(capsule_without_account(i, f"Earmark {i}"))
     db.commit()
     def issue():
         return next(row for row in health.check_data_health(db, 1, audience="user")["issues"]
-                    if row["code"] == "entries_in_a_closed_period")
+                    if row["code"] == "capsule_without_account")
     before = issue()
     assert before["count"] == 101 and len(before["items"]) == 100
     (old,) = notifications.data_health_notifications(db, 1, "2026-10")
     notification_service.sync(db, 1, "data_health", [old])
     db.query(models.Notification).filter_by(dedupe_key=old["dedupe_key"]).one().status = "dismissed"
-    db.delete(db.get(models.Transaction, 101))
-    db.add(models.Transaction(id=102, client_id=1, date=date(2026, 9, 20), description="Replacement",
-                              amount_minor=100, created_at=datetime(2026, 10, 2)))
+    db.query(models.CapsuleRule).filter_by(capsule_id=101).delete()
+    db.delete(db.get(models.Capsule, 101))
+    db.add_all(capsule_without_account(102, "Replacement"))
     db.commit()
     after = issue()
     assert before["items"] == after["items"] and before["count"] == after["count"]

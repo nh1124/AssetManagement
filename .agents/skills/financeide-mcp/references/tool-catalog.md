@@ -34,7 +34,7 @@
 | 取り置き | `capsules_create/update/delete`, `capsule_rules_*`, `capsule_funding_sources_set` | 一括系は影響範囲を先に説明 |
 | 口座 | `accounts_create/update/delete` | delete は明示指示時のみ。既定の口座は作られない |
 | ゴール | `life_scenarios_create/duplicate/update/delete`、`life_events_create/update/delete`（作成は `scenario_id` 必須）、`life_event_links_*`、`life_event_conditions_*`、`household_members_*`、`contribution_plans_create/update/delete`（積立設定）、`assumption_periods_create/update/delete`（期間ごとの前提） | ゴールのシナリオは削除できない |
-| レビュー・締め | `period_reviews_upsert`, `period_closes_close/reopen` | |
+| 振り返り | `period_reviews_upsert` | |
 | 取り置きのお金 | `capsules_contribute`, `capsules_drawdown`, `capsules_set_account_claim` | 確保額が変わる。対象と額を確認してから |
 | 家計簿の未反映 | `transaction_proposals_list/approve/reject`, `depreciation_record/amend` | |
 | 通知・健全性・照合 | `notifications_decide`, `data_health_repair`, `reconcile_adjust` | repair と adjust は仕訳・計画行を変える。先に check / reconcile_account で確認 |
