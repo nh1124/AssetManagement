@@ -3,41 +3,48 @@ import { DataTable, Feedback } from '../db/Database';
 import { useRef, useState } from 'react';
 import { getAiExecutionSettings, getAiPolicies, updateAiExecutionSettings, updateAiPolicies } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
-import type { AiExecutionSettings, AiOperationMode, AiOperationPolicy, AiOperationPolicyPayload } from '../../../types';
+import type { AiExecutionSettings, AiOperationMode, AiOperationPolicy, AiOperationRisk } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { assetErrorMessage, useResource } from '../../useResource';
 import { buttonClass, inputClass, MODE_LABELS, RISK_LABELS } from './labels';
 import { primaryClass } from '../db/forms';
 import { tr } from '../../i18n';
+import { Help } from '../../components/Help';
+import { newPolicyDefaults, newPolicyPayload, newPolicyProblem, policyPayload, POLICY_ACTIONS, POLICY_RESOURCES, type NewPolicy } from './policyRules';
 
 type PolicyEdit = Pick<AiOperationPolicy, 'mode' | 'require_mfa'>;
-
-function policyPayload(row: AiOperationPolicy): AiOperationPolicyPayload {
-    // The replacement API needs every policy, but server identity fields are not writable.
-    return {
-        ai_client_id: row.ai_client_id, resource: row.resource, action: row.action, risk: row.risk,
-        mode: row.mode, threshold_amount: row.threshold_amount, threshold_count: row.threshold_count,
-        require_mfa: row.require_mfa,
-    };
-}
 
 function Policies({ currency }: { currency: string }) {
     const { data, setData, loading, error } = useResource(getAiPolicies);
     const [editing, setEditing] = useState(false);
     const [edits, setEdits] = useState<Record<number, PolicyEdit>>({});
+    const [added, setAdded] = useState<NewPolicy[]>([]);
+    const [draft, setDraft] = useState<NewPolicy>(newPolicyDefaults);
     const [saving, setSaving] = useState(false);
     const [operationError, setOperationError] = useState('');
     const [confirmation, setConfirmation] = useState('');
     const inFlight = useRef(false);
     const rows = data?.map((row) => ({ ...row, ...edits[row.id] })) ?? [];
-    const changed = data?.filter((row) => {
+    const changed = (data?.filter((row) => {
         const edit = edits[row.id];
         return edit && (edit.mode !== row.mode || edit.require_mfa !== row.require_mfa);
-    }).length ?? 0;
+    }).length ?? 0) + added.length;
+    const draftProblem = newPolicyProblem(draft, [...rows, ...added.map(newPolicyPayload)]);
 
     const editRow = (row: AiOperationPolicy, patch: Partial<PolicyEdit>) => {
         setEdits((previous) => ({ ...previous, [row.id]: { mode: row.mode, require_mfa: row.require_mfa, ...patch } }));
         setConfirmation('');
+    };
+    const addRule = () => {
+        if (draftProblem) return;
+        setAdded((previous) => [...previous, draft]);
+        setDraft(newPolicyDefaults());
+        setConfirmation('');
+    };
+    const discard = () => {
+        setEdits({});
+        setAdded([]);
+        setDraft(newPolicyDefaults());
     };
     const save = async () => {
         if (inFlight.current || loading || error || !data || !changed) return;
@@ -46,9 +53,9 @@ function Policies({ currency }: { currency: string }) {
         setOperationError('');
         setConfirmation('');
         try {
-            const updated = await updateAiPolicies(rows.map(policyPayload));
+            const updated = await updateAiPolicies([...rows.map(policyPayload), ...added.map(newPolicyPayload)]);
             setData(updated);
-            setEdits({});
+            discard();
             setEditing(false);
             setConfirmation(tr(`${changed}行の権限ルールを保存しました。`, `Saved ${changed} permission rule(s).`));
         } catch (failure: unknown) {
@@ -63,7 +70,7 @@ function Policies({ currency }: { currency: string }) {
         <section className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">{tr('AI操作の権限ルール', 'AI operation permissions')}</h2>
-                <div className="flex gap-2"><button type="button" disabled={loading || saving || Boolean(error) || !data?.length} onClick={() => setEditing(true)} className={buttonClass}>{tr('権限ルールを編集', 'Edit permissions')}</button></div>
+                <div className="flex gap-2"><button type="button" disabled={loading || saving || Boolean(error) || !data} onClick={() => setEditing(true)} className={buttonClass}>{tr('権限ルールを編集', 'Edit permissions')}</button></div>
             </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{tr('権限ルールを読み込んでいます…', 'Loading permissions…')}</p>}
             {(error || operationError) && <p role="alert" className="text-sm text-[var(--studio-danger)]">{error || operationError}</p>}
@@ -78,9 +85,9 @@ function Policies({ currency }: { currency: string }) {
                     </td><td className="px-5 py-3">{RISK_LABELS[row.risk]}</td>
                 </tr>) : <tr><td colSpan={4} className="px-5 py-4 text-[var(--studio-text-muted)]">{tr('登録された権限ルールはありません。', 'No permission rules.')}</td></tr>}
             </DataTable>}
-            {editing && <Overlay title={tr('AI操作の権限ルールを編集', 'Edit AI operation permissions')} footer={<button type="button" onClick={() => void save()} disabled={loading || saving || Boolean(error) || !changed} className={primaryClass}>{saving ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}</button>} onClose={() => { setEditing(false); setEdits({}); }}>
+            {editing && <Overlay title={tr('AI操作の権限ルールを編集', 'Edit AI operation permissions')} footer={<button type="button" onClick={() => void save()} disabled={loading || saving || Boolean(error) || !changed} className={primaryClass}>{saving ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}</button>} onClose={() => { setEditing(false); discard(); }}>
                 <Feedback error={operationError || error} />
-            {data && (rows.length ? (
+            {data && (rows.length || added.length ? (
                 <fieldset disabled={loading || saving || Boolean(error)}>
                     <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
                         <table className="w-full text-left text-sm" aria-busy={loading || saving}>
@@ -106,14 +113,56 @@ function Policies({ currency }: { currency: string }) {
                                         <td className="whitespace-nowrap px-5 py-3">{RISK_LABELS[row.risk]}</td>
                                     </tr>
                                 ))}
+                                {added.map((rule, index) => (
+                                    <tr key={`added-${index}`}>
+                                        <th scope="row" className="px-5 py-3 font-medium">
+                                            {rule.resource.trim().toLowerCase()}
+                                            <span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{tr('すべてのAIクライアント・未保存', 'All AI clients · not saved')}</span>
+                                        </th>
+                                        <td className="px-5 py-3">{rule.action.trim().toLowerCase()}</td>
+                                        <td className="space-y-2 px-5 py-3"><p>{MODE_LABELS[rule.mode]}{rule.require_mfa && tr(' ／ MFAを必須にする', ' / MFA required')}</p>
+                                            <button type="button" onClick={() => setAdded((previous) => previous.filter((_, other) => other !== index))} className={buttonClass}>{tr('追加を取り消す', 'Remove')}</button>
+                                        </td>
+                                        <td className="whitespace-nowrap px-5 py-3">{RISK_LABELS[rule.risk]}</td>
+                                    </tr>
+                                ))}
                             </tbody>
                         </table>
                     </div>
                 </fieldset>
             ) : <p className="text-sm text-[var(--studio-text-muted)]">{tr('登録された権限ルールはありません。', 'No permission rules.')}</p>)}
+            {data && <fieldset disabled={loading || saving || Boolean(error)} className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4">
+                <legend className="flex items-center gap-1.5 px-1 text-sm font-semibold">{tr('権限ルールを追加', 'Add a permission rule')}
+                    <Help label={tr('権限ルールを追加', 'Add a permission rule')} text={tr('ルールの無い操作は既定の扱いになります（読み取りは許可、書き込みは承認が必要）。AIがMCPから帳簿へ直接書き込むには、MCPの書き込み方式を「直接書き込み」にし、transactions・create・中 を「実行を許可」にします。追加したルールはすべてのAIクライアントに効きます。', 'Operations without a rule follow the defaults (reads allowed, writes need approval). For the AI to write the ledger directly over MCP, set MCP writes to “Write directly” and transactions · create · Medium to “Allow”. An added rule applies to every AI client.')} wide />
+                </legend>
+                <div className="flex flex-wrap items-end gap-3 text-sm">
+                    <label className="flex flex-col gap-1">{tr('対象', 'Resource')}
+                        <input value={draft.resource} list="ai-policy-resources" onChange={(event) => setDraft({ ...draft, resource: event.target.value })} className={inputClass} />
+                    </label>
+                    <label className="flex flex-col gap-1">{tr('操作', 'Operation')}
+                        <input value={draft.action} list="ai-policy-actions" onChange={(event) => setDraft({ ...draft, action: event.target.value })} className={inputClass} />
+                    </label>
+                    <label className="flex flex-col gap-1">{tr('リスク', 'Risk')}
+                        <select value={draft.risk} onChange={(event) => setDraft({ ...draft, risk: event.target.value as AiOperationRisk })} className={inputClass}>
+                            {Object.entries(RISK_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                        </select>
+                    </label>
+                    <label className="flex flex-col gap-1">{tr('権限ルール', 'Permission')}
+                        <select value={draft.mode} onChange={(event) => setDraft({ ...draft, mode: event.target.value as AiOperationMode })} className={inputClass}>
+                            {Object.entries(MODE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                        </select>
+                    </label>
+                    <label className="flex items-center gap-2 py-2 text-xs"><input type="checkbox" checked={draft.require_mfa} onChange={(event) => setDraft({ ...draft, require_mfa: event.target.checked })} />{tr('MFAを必須にする', 'Require MFA')}</label>
+                    <button type="button" onClick={addRule} disabled={Boolean(draftProblem)} className={buttonClass}>{tr('追加', 'Add')}</button>
+                </div>
+                <datalist id="ai-policy-resources">{POLICY_RESOURCES.map((resource) => <option key={resource} value={resource} />)}</datalist>
+                <datalist id="ai-policy-actions">{POLICY_ACTIONS.map((action) => <option key={action} value={action} />)}</datalist>
+                {draftProblem === 'missing' && <p className="text-xs text-[var(--studio-text-muted)]">{tr('対象と操作を入力してください。', 'Enter a resource and an operation.')}</p>}
+                {draftProblem === 'duplicate' && <p role="alert" className="text-xs text-[var(--studio-danger)]">{tr('同じ対象・操作・リスクのルールがあります。上の表で変更してください。', 'A rule for this resource, operation and risk exists. Change it in the table above.')}</p>}
+            </fieldset>}
             <div className="flex items-center gap-3">
                 <span role="status" className="text-xs text-[var(--studio-text-muted)]">{tr(`変更した行：${changed}行`, `Changed rows: ${changed}`)}</span>
-                {changed > 0 && <button type="button" onClick={() => { setEdits({}); setOperationError(''); }} disabled={saving} className={buttonClass}>{tr('変更を戻す', 'Undo changes')}</button>}
+                {changed > 0 && <button type="button" onClick={() => { discard(); setOperationError(''); }} disabled={saving} className={buttonClass}>{tr('変更を戻す', 'Undo changes')}</button>}
             </div>
             </Overlay>}
         </section>

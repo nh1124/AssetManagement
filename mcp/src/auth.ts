@@ -237,6 +237,36 @@ export function registerClient(body: Record<string, unknown>): DcrResponse {
   return { ...client, client_id_issued_at: Math.floor(now / 1000) };
 }
 
+// ─── Redirect URI Matching ────────────────────────────────
+
+// Native apps listen on a random loopback port, so RFC 8252 §7.3 says the
+// port of a loopback http redirect URI is ignored when matching (Claude Code
+// registers "http://localhost/callback" and calls back on any port). Only the
+// port is ignored: scheme, host, path and query must match the registered URI
+// character for character, and every other redirect URI is an exact match.
+const LOOPBACK_REDIRECT = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::([0-9]{1,5}))?([/?][^#]*)?$/;
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+function loopbackRedirectWithoutPort(uri: string): string | null {
+  const match = LOOPBACK_REDIRECT.exec(uri);
+  if (!match) return null;
+  const [, host, port, rest = ""] = match;
+  if (port !== undefined && (port.startsWith("0") || Number(port) > 65535)) return null;
+  // Re-parse so that nothing the regex let through can point elsewhere.
+  let parsed: URL;
+  try { parsed = new URL(uri); } catch { return null; }
+  if (parsed.protocol !== "http:" || !LOOPBACK_HOSTNAMES.has(parsed.hostname)) return null;
+  if (parsed.username || parsed.password || parsed.hash) return null;
+  return `http://${host}${rest}`;
+}
+
+export function isRegisteredRedirectUri(registered: readonly string[], requested: string): boolean {
+  if (registered.includes(requested)) return true;
+  const requestedWithoutPort = loopbackRedirectWithoutPort(requested);
+  if (requestedWithoutPort === null) return false;
+  return registered.some(uri => loopbackRedirectWithoutPort(uri) === requestedWithoutPort);
+}
+
 // ─── Authorization Code ───────────────────────────────────
 
 export function createAuthCode(params: {

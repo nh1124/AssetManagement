@@ -14,6 +14,7 @@ import {
   createAuthCode,
   exchangeCodeForTokens,
   refreshAccessToken,
+  isRegisteredRedirectUri,
 } from "./auth.js";
 import { withMcpRequestContext, type McpRequestContext } from "./api-client.js";
 
@@ -242,7 +243,7 @@ app.get("/authorize", async (req, res) => {
 
   const client = await resolveClient(client_id);
   if (!client) { res.status(400).json({ error: "invalid_client" }); return; }
-  if (!client.redirect_uris.includes(redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
+  if (!isRegisteredRedirectUri(client.redirect_uris, redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
 
   console.info("[oauth] authorize GET", { client_id, resource });
 
@@ -269,7 +270,7 @@ app.post("/authorize", async (req, res) => {
 
   const client = await resolveClient(client_id);
   if (!client) { res.status(400).json({ error: "invalid_client" }); return; }
-  if (!client.redirect_uris.includes(redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
+  if (!isRegisteredRedirectUri(client.redirect_uris, redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
 
   const credentials = await validateUserCredentials(username ?? "", password ?? "", factorCode ?? "");
   if (!credentials.user) {
