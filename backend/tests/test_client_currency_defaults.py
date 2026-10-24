@@ -243,7 +243,7 @@ def test_ai_preview_and_apply_resolve_and_pin_omitted_currency(posting, kind):
     row = models.AiChangeRequest(resource="transactions" if kind == "transaction" else "auto_transactions",
                                  action="create", input_payload=preview["input_payload"], risk="medium")
     result = ai._apply_dispatch(db, client.id, row)
-    saved = (db.get(models.TransactionProposal, result["proposal_id"]) if kind == "transaction"
+    saved = (db.get(models.Transaction, result["transaction_id"]) if kind == "transaction"
              else db.get(models.RegistryEntry, result["registry_entry_id"]))
     assert saved.currency == "USD"
     if kind == "transaction":
@@ -264,7 +264,7 @@ def test_ai_apply_resolves_none_before_creating_legacy_request(posting, kind):
                                  action="create", input_payload={**_payload(kind, accounts), "currency": None},
                                  risk="medium")
     result = ai._apply_dispatch(db, client.id, row)
-    saved = (db.get(models.TransactionProposal, result["proposal_id"]) if kind == "transaction"
+    saved = (db.get(models.Transaction, result["transaction_id"]) if kind == "transaction"
              else db.get(models.RegistryEntry, result["registry_entry_id"]))
     assert saved.currency == "USD"
     if kind == "transaction":

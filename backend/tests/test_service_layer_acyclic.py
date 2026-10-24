@@ -92,7 +92,6 @@ LAYERS: dict[str, int] = {
     # L6 - dependency runs UI -> workflow -> service; a workflow may use
     # anything below it to compose a request across features.
     "ai_change_request_workflow": 6,
-    "transaction_approval_workflow": 6,
     "ledger_entry_workflow": 6,
     "transaction_batch_workflow": 6,
     "product_workflow": 6,
