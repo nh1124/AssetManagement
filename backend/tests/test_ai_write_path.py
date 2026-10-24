@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from app.services.ledger_valuation import calculate_account_valued_balance
-
 from app.services.money_storage import to_minor, rule_amount_fields
 
 
@@ -11,14 +9,13 @@ import pytest
 
 from backend.app import models, schemas
 from backend.app.domain.money import Money
-from backend.app.routers.transactions import approve_proposal as approve_proposal_endpoint
 from backend.app.services.ai_policy_service import set_operation_mode
 from backend.app.workflows.ai_change_request_workflow import (
     apply_change_request,
     approve_change_request,
     create_change_request,
 )
-from backend.app.workflows.transaction_approval_workflow import approve_transaction_proposal
+from backend.app.workflows.ledger_entry_workflow import approve_entry_proposal
 from test_transaction_proposals import _propose, posting
 
 
@@ -77,65 +74,19 @@ def _capsule_rule(db, cash, destination):
     return capsule, rule
 
 
-def test_default_approved_ai_create_queues_pending_proposal_and_marks_request_applied(posting):
+@pytest.mark.parametrize("mode", [None, "approval", "allow"], ids=["default", "approval", "allow"])
+def test_approved_ai_create_posts_directly_whatever_the_permission(posting, mode):
+    """The person approved it with the authenticator code, so it never waits in 未反映 (WP38)."""
     db, cash, destination, _ = posting
     request = _approved_request(db, _payload(cash, destination))
-
-    applied = apply_change_request(db, 1, 1, request.id)
-
-    proposal = db.query(models.TransactionProposal).one()
-    assert db.query(models.Transaction).count() == 0
-    assert db.query(models.JournalEntry).count() == 0
-    assert proposal.status == "pending"
-    assert proposal.origin == "ai"
-    assert proposal.origin_ref == {"change_request_id": request.id}
-    assert applied.result == {"proposal_id": proposal.id, "queued": True}
-    assert applied.status == "applied"
-    assert calculate_account_valued_balance(db, cash) == 0
-    assert calculate_account_valued_balance(db, destination) == 0
-
-
-@pytest.mark.parametrize("explicit_legs", [False, True], ids=["from-to-shorthand", "explicit-legs"])
-def test_queued_proposal_preserves_requested_amount_and_resolved_legs(posting, explicit_legs):
-    db, cash, destination, _ = posting
-    payload = _payload(cash, destination)
-    expected_legs = [
-        {"account_id": destination.id, "debit": 1200.0, "credit": 0.0, "memo": None},
-        {"account_id": cash.id, "debit": 0.0, "credit": 1200.0, "memo": None},
-    ]
-    if explicit_legs:
-        expected_legs = [
-            {"account_id": cash.id, "debit": 0.0, "credit": 1200.0, "memo": "Funding"},
-            {"account_id": destination.id, "debit": 1200.0, "credit": 0.0, "memo": "Saving"},
-        ]
-        payload["legs"] = expected_legs
-        payload["from_account_id"], payload["to_account_id"] = destination.id, cash.id
-    request = _approved_request(db, payload)
-
-    apply_change_request(db, 1, 1, request.id)
-    db.expire_all()
-
-    proposal = db.query(models.TransactionProposal).one()
-    assert proposal.amount == payload["amount"]
-    assert proposal.legs == [{**leg,
-        "debit": Money.from_major(str(leg["debit"]), payload["currency"]).minor,
-        "credit": Money.from_major(str(leg["credit"]), payload["currency"]).minor,
-    } for leg in expected_legs]
-    assert proposal.date == date(2026, 10, 11)
-    assert proposal.description == payload["description"]
-    assert proposal.currency == payload["currency"]
-
-
-def test_allowing_the_ai_to_record_posts_directly_without_ai_proposal(posting):
-    db, cash, destination, _ = posting
-    request = _approved_request(db, _payload(cash, destination))
-    set_operation_mode(db, 1, "transactions.create", "allow", None)
+    if mode is not None:
+        set_operation_mode(db, 1, "transactions.create", mode, None)
 
     applied = apply_change_request(db, 1, 1, request.id)
 
     transaction = db.query(models.Transaction).one()
     assert db.query(models.TransactionProposal).count() == 0
-    assert applied.result == {"transaction_id": transaction.id, "queued": False}
+    assert applied.result == {"transaction_id": transaction.id}
     assert applied.status == "applied"
     assert transaction.amount == 1200
     assert sorted((entry.account_id, entry.debit, entry.credit) for entry in transaction.journal_entries) == sorted([
@@ -143,34 +94,52 @@ def test_allowing_the_ai_to_record_posts_directly_without_ai_proposal(posting):
     ])
 
 
-def test_approving_ai_proposal_posts_and_queues_triggered_capsule_reservation(posting):
+@pytest.mark.parametrize("explicit_legs", [False, True], ids=["from-to-shorthand", "explicit-legs"])
+def test_posted_transaction_keeps_requested_amount_and_resolved_legs(posting, explicit_legs):
+    db, cash, destination, _ = posting
+    payload = _payload(cash, destination)
+    expected_legs = [
+        (destination.id, 1200.0, 0.0, None),
+        (cash.id, 0.0, 1200.0, None),
+    ]
+    if explicit_legs:
+        payload["legs"] = [
+            {"account_id": cash.id, "debit": 0.0, "credit": 1200.0, "memo": "Funding"},
+            {"account_id": destination.id, "debit": 1200.0, "credit": 0.0, "memo": "Saving"},
+        ]
+        expected_legs = [(leg["account_id"], leg["debit"], leg["credit"], leg["memo"]) for leg in payload["legs"]]
+        payload["from_account_id"], payload["to_account_id"] = destination.id, cash.id
+    request = _approved_request(db, payload)
+
+    apply_change_request(db, 1, 1, request.id)
+    db.expire_all()
+
+    transaction = db.query(models.Transaction).one()
+    assert transaction.amount_minor == Money.from_major(str(payload["amount"]), payload["currency"]).minor
+    assert sorted((entry.account_id, entry.debit, entry.credit, entry.memo) for entry in transaction.journal_entries) == sorted(expected_legs)
+    assert transaction.date == date(2026, 10, 11)
+    assert transaction.description == payload["description"]
+    assert transaction.currency == payload["currency"]
+
+
+def test_applying_ai_create_queues_the_capsule_reservation_it_triggers(posting):
     db, cash, destination, _ = posting
     capsule, rule = _capsule_rule(db, cash, destination)
     request = _approved_request(db, _payload(cash, destination))
-    apply_change_request(db, 1, 1, request.id)
-    proposal = db.query(models.TransactionProposal).one()
-    assert db.query(models.Transaction).count() == 0
 
-    response = approve_proposal_endpoint(
-        proposal.id,
-        db=db,
-        current_client=db.get(models.Client, 1),
-    )
+    apply_change_request(db, 1, 1, request.id)
 
     transaction = db.query(models.Transaction).one()
-    reservation = db.query(models.TransactionProposal).filter_by(origin="capsule").one()
-    assert response["id"] == transaction.id
-    assert proposal.status == "posted"
-    assert proposal.posted_transaction_id == transaction.id
+    reservation = db.query(models.TransactionProposal).one()
+    assert reservation.origin == "capsule"
     assert reservation.status == "pending"
     assert reservation.origin_ref == {"capsule_id": capsule.id, "rule_id": rule.id}
     assert reservation.trigger_transaction_id == transaction.id
     assert reservation.amount == 300
-    assert db.query(models.TransactionProposal).count() == 2
     assert db.query(models.JournalEntry).count() == 2
 
 
-def test_approving_capsule_origin_proposal_does_not_queue_another_reservation(posting):
+def test_approving_a_capsule_reservation_does_not_queue_another(posting):
     db, cash, destination, _ = posting
     capsule, rule = _capsule_rule(db, cash, destination)
     proposal = _propose(
@@ -181,21 +150,15 @@ def test_approving_capsule_origin_proposal_does_not_queue_another_reservation(po
     )
     db.commit()
 
-    transaction = approve_transaction_proposal(db, proposal, actor_client_id=1)
-    db.flush()
+    transaction = approve_entry_proposal(db, 1, proposal.id)
 
     assert proposal.status == "posted"
-    assert db.query(models.Transaction).one() is transaction
-    assert db.query(models.TransactionProposal).one() is proposal
+    assert db.query(models.Transaction).one() == transaction
+    assert db.query(models.TransactionProposal).one() == proposal
     assert db.query(models.JournalEntry).count() == 2
-    db.rollback()
-    assert db.query(models.Transaction).count() == 0
-    assert db.query(models.JournalEntry).count() == 0
-    db.refresh(proposal)
-    assert proposal.status == "pending"
 
 
-def test_queued_apply_audit_result_records_proposal_and_queued_true(posting):
+def test_apply_audit_result_records_the_posted_transaction(posting):
     db, cash, destination, _ = posting
     request = _approved_request(db, _payload(cash, destination))
 
@@ -207,6 +170,5 @@ def test_queued_apply_audit_result_records_proposal_and_queued_true(posting):
     assert log.result_summary == {
         "change_request_id": request.id,
         "status": "applied",
-        "proposal_id": applied.result["proposal_id"],
-        "queued": True,
+        "transaction_id": applied.result["transaction_id"],
     }

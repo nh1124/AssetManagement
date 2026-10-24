@@ -14,7 +14,6 @@ from ..services.capsule_service import (
     capsule_reservations_for_transaction,
     retract_capsule_reservations,
 )
-from .transaction_approval_workflow import approve_transaction_proposal
 
 
 def record_entry(
@@ -163,7 +162,9 @@ def approve_entry_proposal(
     if proposal is None:
         return None
     try:
-        transaction = approve_transaction_proposal(db, proposal, actor_client_id=client_id)
+        # A proposal is a capsule reservation, so posting it does not run the
+        # rules that made it (an approved AI change request posts at apply).
+        transaction = ledger_service.approve_proposal(db, proposal, actor_client_id=client_id)
         db.commit()
         db.refresh(transaction)
         return transaction

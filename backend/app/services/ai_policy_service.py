@@ -69,11 +69,6 @@ def operation_mode(db: Session, client_id: int, key: str) -> AiMode:
     return saved if saved in operation.modes else operation.default
 
 
-def ledger_write_is_direct(db: Session, client_id: int) -> bool:
-    """An approved change request that records a transaction posts it, rather than queueing it, only if allowed."""
-    return operation_mode(db, client_id, "transactions.create") == "allow"
-
-
 def _operation_payload(operation: AiOperation, saved: dict[str, AiMode]) -> dict[str, Any]:
     mode = saved.get(operation.key)
     return {

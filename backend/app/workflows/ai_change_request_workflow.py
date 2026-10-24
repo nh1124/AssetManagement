@@ -18,7 +18,6 @@ from ..services.fx_service import get_client_currency
 from ..services.ledger_service import (
     create_transaction,
     find_account_ids,
-    propose_transaction,
     simple_legs,
 )
 from ..services.budget_plan_store import get_plan_line, update_plan_lines
@@ -29,7 +28,6 @@ from ..services.schedule_rules import next_occurrence
 from ..domain import ai_operations
 from ..services.ai_policy_service import (
     AiOperationContext,
-    ledger_write_is_direct,
     operation_mode,
     write_ai_audit_log,
 )
@@ -496,23 +494,9 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         to_account_id = data.pop("to_account_id", None)
         if legs is None:
             legs = simple_legs(data["amount_minor"], from_account_id, to_account_id)
-        # Posted directly only if the person allows the AI to record transactions;
-        # otherwise it waits in 未反映 for a second decision (ai_write_path §1.3).
-        if not ledger_write_is_direct(db, client_id):
-            proposal = propose_transaction(
-                db,
-                client_id,
-                origin="ai",
-                origin_ref={"change_request_id": row.id},
-                date=data["date"],
-                description=data["description"],
-                amount_minor=data["amount_minor"],
-                currency=data["currency"],
-                legs=legs,
-            )
-            # The AI's part is complete, so apply marks the request applied;
-            # ledger posting still waits for the proposal's own approval.
-            return {"proposal_id": proposal.id, "queued": True}
+        # The person approved this with the authenticator code, so it posts like
+        # their own entry, capsule rules included; no second decision in 未反映
+        # (ai_write_path §1.3).
         tx = create_transaction(
             db,
             client_id=client_id,
@@ -521,7 +505,7 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         )
         db.flush()
         apply_capsule_rules_for_transaction(db, tx, commit=False)
-        return {"transaction_id": tx.id, "queued": False}
+        return {"transaction_id": tx.id}
 
     if (row.resource, row.action) == ("monthly_plan_lines", "update"):
         line_id = int(row.target_ref.get("id") or row.input_payload.get("id") or 0)
