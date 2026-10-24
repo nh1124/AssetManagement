@@ -117,15 +117,9 @@ def unmatched(db, client_id):
     return lambda: setattr(row, "status", "rejected")
 
 
-def unclosed_month(db, client_id):
-    db.add(models.Transaction(client_id=client_id, date=date(2026, 9, 30), description="食費", amount_minor=500))
-    return lambda: db.add(models.PeriodClose(client_id=client_id, period="2026-09"))
-
-
 @pytest.mark.parametrize("kind, seed, link", [
     (workflow.APPROVAL_PENDING, approval, "/automation/approvals"),
     (workflow.UNMATCHED, unmatched, "/ledger/auto"),
-    (workflow.MONTH_CLOSE, unclosed_month, "/ledger?month=2026-09"),
 ])
 def test_each_kind_notifies_while_its_reasons_hold(db, kind, seed, link):
     generate = workflow.GENERATORS[kind]
@@ -171,5 +165,3 @@ def test_notifications_follow_the_client_language_without_reopening(db):
     assert english["title"] == "12 automatic transaction(s) not yet recorded" and english["body"].splitlines()[-1] == "and 2 more"
     # The same reasons in another language are the same notification, so a dismissal holds.
     assert english["dedupe_key"] == japanese["dedupe_key"]
-    (close,) = workflow.month_close_notifications(db, 1, PERIOD) or [None]
-    assert close is None or close["title"].endswith("is not closed")

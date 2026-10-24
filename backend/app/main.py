@@ -28,7 +28,6 @@ from .routers import (
     life_scenarios,
     household_members,
     period_reviews,
-    period_closes,
     plan,
     plan_reflection,
     products,
@@ -197,7 +196,6 @@ app.include_router(notifications.router)
 app.include_router(household_members.router)
 app.include_router(budget_plans.router, dependencies=[Depends(get_current_client)])
 app.include_router(period_reviews.router)
-app.include_router(period_closes.router)
 app.include_router(simulation.router)
 app.include_router(accounts.router)
 app.include_router(ai_operations.router)

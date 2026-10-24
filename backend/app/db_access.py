@@ -36,7 +36,7 @@ AUTH_TABLES = ("client_mfa_settings", "client_recovery_codes")
 
 USER_DATA_TABLES = (
     "accounts", "journal_entries", "transactions", "transaction_proposals", "transaction_batches",
-    "registry_entries", "budget_plans", "monthly_plan_lines", "period_closes", "period_reviews",
+    "registry_entries", "budget_plans", "monthly_plan_lines", "period_reviews",
     "capsules", "capsule_drawdowns", "capsule_rules", "capsule_funding_sources",
     "life_events", "life_event_conditions", "household_members", "life_scenarios",
     "scenario_contribution_plans", "scenario_assumption_periods", "goal_budget_reflections",

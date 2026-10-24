@@ -179,7 +179,7 @@ def test_v10_legacy_collection_warns_and_retired_capsule_fields_are_ignored(db, 
     _, one, _ = seed_accounts(db)
     owner = service.create_capsule(db, 1, schemas.CapsuleCreate(name="PC", target_amount=1001, monthly_contribution=10, account_id=one.id))
     document = json.loads(json.dumps(export_client(db, db.get(models.Client, 1))))
-    assert document["version"] == 31
+    assert document["version"] == 32
     assert "capsule_holdings" not in document["data"]
     row = document["data"]["capsules"][0]
     assert "current_balance" not in row and "account_id" not in row

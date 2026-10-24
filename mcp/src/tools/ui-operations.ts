@@ -107,12 +107,6 @@ export function registerUiOperationTools(server: McpServer): void {
     ({ id: recordId, ...body }) => api.put<unknown>(`/plan/records/${recordId}`, only(body)));
   register(server, "plan_records_delete", "Delete a plan record", "Deletes the user's record.", { id }, "delete", ({ id: recordId }) => api.delete<unknown>(`/plan/records/${recordId}`));
 
-  // Month close (月次締め)
-  register(server, "period_closes_list", "List closed months", "The months that are closed.", {}, "read", () => api.get<unknown>("/period-closes"));
-  register(server, "period_closes_close", "Close a month", "Marks a month as checked and closed.", { period: periodSchema, note: z.string().nullable().optional() }, "write",
-    (input) => api.post<unknown>("/period-closes", only(input)));
-  register(server, "period_closes_reopen", "Reopen a month", "Removes a month's close.", { period: periodSchema }, "delete", ({ period }) => api.delete<unknown>(`/period-closes/${period}`));
-
   // Earmark money (取り置きの拠出・使用・確保額)
   register(server, "capsule_drawdowns_list", "List an earmark's uses", "What was used from an earmark.", { capsule_id: id }, "read",
     ({ capsule_id }) => api.get<unknown>(`/capsules/${capsule_id}/drawdowns`));

@@ -1,5 +1,4 @@
 import { useConfirm } from '../components/useConfirm';
-import ClosedPeriodWarning from '../components/ClosedPeriodWarning';
 import DrawdownClaim from '../components/DrawdownClaim';
 import { Help } from '../components/Help';
 import { OverlayFooter } from '../components/Overlay';
@@ -224,7 +223,6 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
         submitInFlight.current = true;
         setSubmitting(true);
         try {
-            let closedPeriod: string | null | undefined;
             if (existing) {
                 const reservations = await getCapsuleReservations(existing.id);
                 const affected = reservations.filter((row) => row.status !== 'rejected').map((row) => row.capsule_name || tr('取り置き', 'Earmark')).join(tr('、', ', '));
@@ -232,8 +230,8 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
                     `「${currentClient?.name ?? ''}」の取引 #${existing.id}を ${formatCurrency(numericAmount, currency)}（${currency}）に編集しますか？\n元の取引が発火させた取り置き予約を取り消して再評価するため、確保額・取り置きが変わる場合があります。${affected ? `\n対象：${affected}` : ''}\n紐づく取り崩し記録は再計算・更新されません。`,
                     `Change transaction #${existing.id} for “${currentClient?.name ?? ''}” to ${formatCurrency(numericAmount, currency)} (${currency})?\nThe earmark reservations the original transaction triggered are cancelled and evaluated again, so amounts set aside and earmarks may change.${affected ? `\nAffected: ${affected}` : ''}\nLinked drawdown records are not recalculated or updated.`,
                 ), tr('保存する', 'Save')))) return;
-                const result = await updateTransaction(existing.id, { date, amount: numericAmount, description, currency, legs: editLegs });
-                setConfirmation(tr(`取引を更新しました。${result.closed_period ? ` ${result.closed_period} は締め済みです。締め後の変更として報告されます。` : ''}`, `Transaction updated.${result.closed_period ? ` ${result.closed_period} is closed; this is reported as a change after the close.` : ''}`));
+                await updateTransaction(existing.id, { date, amount: numericAmount, description, currency, legs: editLegs });
+                setConfirmation(tr('取引を更新しました。', 'Transaction updated.'));
                 onSaved?.();
                 return;
             }
@@ -259,15 +257,14 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
                     })) : [{ account_id: Number(debitAccountId), debit: numericAmount }]),
                     { account_id: Number(creditAccountId), credit: numericAmount },
                 ];
-                const result = await createTransaction({ date, amount: numericAmount, description, currency, legs });
-                closedPeriod = result.closed_period;
+                await createTransaction({ date, amount: numericAmount, description, currency, legs });
             }
             // Keep the first debit pick when returning from a split to a simple entry.
             if (splitActive) setDebitAccountId(splitRows[0].accountId);
             setAmount('');
             setDescription('');
             setSplitRows([]);
-            setConfirmation(kind === 'allocation' ? tr('用途を確保しました。', 'Money set aside.') : tr(`取引を記録しました。${closedPeriod ? ` ${closedPeriod} は締め済みです。締め後の変更として報告されます。` : ''}`, `Transaction recorded.${closedPeriod ? ` ${closedPeriod} is closed; this is reported as a change after the close.` : ''}`));
+            setConfirmation(kind === 'allocation' ? tr('用途を確保しました。', 'Money set aside.') : tr('取引を記録しました。', 'Transaction recorded.'));
         } catch (failure: unknown) {
             setError(errorMessage(failure));
         } finally {
@@ -306,7 +303,6 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
                         <label className="block space-y-2 text-sm">
                             <span className="text-[var(--studio-text-muted)]">{tr('日付', 'Date')}</span>
                             <input type="date" required value={date} onChange={(event) => setDate(event.target.value)} className={inputClass} />
-                            <ClosedPeriodWarning date={date} />
                         </label>
                     )}
                     <div><label className="block space-y-2 text-sm">

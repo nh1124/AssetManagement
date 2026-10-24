@@ -2,7 +2,6 @@ import { useCallback, useContext, useId, useState, type FormEvent, type ReactNod
 import { amendDepreciation, getAccounts, getDepreciationPreview, getProducts, recordDepreciation } from '../../api';
 import type { DepreciationPreview, Transaction } from '../../types';
 import { formatCurrency } from '../../utils/currency';
-import ClosedPeriodWarning from '../components/ClosedPeriodWarning';
 import { OverlayFooter } from '../components/Overlay';
 import { OverlayFooterContext } from '../components/overlayContext';
 import { assetErrorMessage, useResource } from '../useResource';
@@ -104,7 +103,7 @@ export default function DepreciationForm({ existing, kindSelect, onSaved, onCanc
                     <Field label={tr('対象期', 'Period')} help={tr('同じ期は二度記帳できません。空いている最初の期を表示しています。', 'A period can be recorded only once. The first open period is shown.')}><input required type="month" value={period} onChange={(changed) => { setPeriod(changed.target.value); if (changed.target.value) setDate(periodEnd(changed.target.value)); }} className={inputClass} /></Field>
                 </>}
                 <Field label={tr(`金額（${currency}）`, `Amount (${currency})`)}><input required type="number" min="0.01" step="any" value={amount} onChange={(changed) => setAmount(changed.target.value)} className={inputClass} /></Field>
-                <Field label={tr('日付', 'Date')}><input required type="date" value={date} onChange={(changed) => setDate(changed.target.value)} className={inputClass} /><ClosedPeriodWarning date={date} /></Field>
+                <Field label={tr('日付', 'Date')}><input required type="date" value={date} onChange={(changed) => setDate(changed.target.value)} className={inputClass} /></Field>
                 <Field label={tr('費用科目', 'Expense account')}><select required value={expenseId ?? ''} onChange={(changed) => setExpenseId(changed.target.value ? Number(changed.target.value) : null)} className={inputClass}>
                     <option value="">{tr('選択してください', 'Choose…')}</option>
                     {expenses.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}

@@ -17,7 +17,6 @@ const kindLabels = (): Record<string, string> => ({
     approval_pending: tr('承認待ち', 'Awaiting approval'),
     unmatched: tr('自動取引', 'Automatic transactions'),
     data_health: tr('データの確認', 'Data check'),
-    month_close: tr('月次締め', 'Monthly close'),
 });
 const KIND_ORDER = Object.keys(kindLabels());
 
