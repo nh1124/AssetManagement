@@ -267,6 +267,54 @@ export function isRegisteredRedirectUri(registered: readonly string[], requested
   return registered.some(uri => loopbackRedirectWithoutPort(uri) === requestedWithoutPort);
 }
 
+// ─── Resource and Token Audience (RFC 8707) ───────────────
+
+// A token names the MCP server it was issued for in its audience. This server
+// issues tokens only for its own address and accepts only tokens for its own
+// address plus those listed in MCP_ACCEPTED_RESOURCES (other MCP servers that
+// share MCP_JWT_SECRET). Removing an address from the list and restarting
+// closes it again. "Own address" is the MCP endpoint with and without /mcp,
+// because the server answers on both.
+
+/** Resources are compared as URL parses them, without a trailing slash; anything else is not a resource. */
+export function normalizeResource(value: string): string | null {
+  let url: URL;
+  try { url = new URL(value.trim()); } catch { return null; }
+  if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password || url.hash) return null;
+  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}${url.search}`;
+}
+
+function configuredResources(): string[] {
+  const entries = (process.env.MCP_ACCEPTED_RESOURCES ?? "").split(",").map(value => value.trim()).filter(Boolean);
+  return entries.map(value => {
+    const normalized = normalizeResource(value);
+    // Refuse to start rather than silently drop a mistyped address.
+    if (normalized === null) throw new Error(`Invalid configuration: MCP_ACCEPTED_RESOURCES entry is not an http(s) URL: ${value}`);
+    return normalized;
+  });
+}
+
+export const EXTRA_ACCEPTED_RESOURCES = configuredResources();
+
+export function ownResources(canonicalResource: string): string[] {
+  const own = normalizeResource(canonicalResource);
+  return own ? [...new Set([own, own.replace(/\/mcp$/, "")])] : [];
+}
+
+export function acceptedResources(canonicalResource: string, extra: readonly string[] = EXTRA_ACCEPTED_RESOURCES): string[] {
+  return [...new Set([...ownResources(canonicalResource), ...extra])];
+}
+
+export function isResourceIn(resource: string, resources: readonly string[]): boolean {
+  const normalized = normalizeResource(resource);
+  return normalized !== null && resources.includes(normalized);
+}
+
+export function tokenAudienceAccepted(aud: string | string[] | undefined, accepted: readonly string[]): boolean {
+  const audiences = Array.isArray(aud) ? aud : aud ? [aud] : [];
+  return audiences.some(value => isResourceIn(value, accepted));
+}
+
 // ─── Authorization Code ───────────────────────────────────
 
 export function createAuthCode(params: {
