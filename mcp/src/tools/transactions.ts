@@ -12,12 +12,7 @@ import {
   transactionPayloadSchema,
 } from "../domain-guidance.js";
 import { toStructured } from "../utils.js";
-import {
-  changeRequestUnsupportedResult,
-  createChangeRequestResult,
-  directWriteMessage,
-  shouldCreateChangeRequest,
-} from "../write-control.js";
+import { directWriteMessage, writeOrRequestChange } from "../write-control.js";
 
 interface Transaction {
   id: number;
@@ -103,19 +98,11 @@ export function registerTransactionTools(server: McpServer): void {
         if (to_account_id !== undefined) body.to_account_id = to_account_id;
         if (currency !== undefined) body.currency = currency;
         if (legs !== undefined) body.legs = legs;
-        if (await shouldCreateChangeRequest()) {
-          return await createChangeRequestResult({
-            resource: "transactions",
-            action: "create",
-            risk: "medium",
-            input_payload: body,
-          });
-        }
-        const data = await api.post<Transaction>("/transactions/", body);
-        return {
-          content: [{ type: "text", text: directWriteMessage("Created transaction", data) }],
-          structuredContent: toStructured(data),
-        };
+        return await writeOrRequestChange("Created transaction", () => api.post<Transaction>("/transactions/", body), {
+          resource: "transactions",
+          action: "create",
+          input_payload: body,
+        });
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
       }
@@ -168,9 +155,6 @@ export function registerTransactionTools(server: McpServer): void {
     },
     async ({ id, ...patch }) => {
       try {
-        if (await shouldCreateChangeRequest()) {
-          return changeRequestUnsupportedResult("transactions:update");
-        }
         const data = await api.put<Transaction>(`/transactions/${id}`, patch);
         return {
           content: [{ type: "text", text: directWriteMessage("Updated transaction", data) }],
@@ -196,9 +180,6 @@ export function registerTransactionTools(server: McpServer): void {
     },
     async ({ id }) => {
       try {
-        if (await shouldCreateChangeRequest()) {
-          return changeRequestUnsupportedResult("transactions:delete");
-        }
         const data = await api.delete<unknown>(`/transactions/${id}`);
         return {
           content: [{ type: "text", text: directWriteMessage(`Deleted transaction ${id}`, data) }],

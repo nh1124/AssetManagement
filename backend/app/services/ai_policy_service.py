@@ -7,40 +7,17 @@ from datetime import date, datetime
 from typing import Any, Literal
 
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
-
-from .money_storage import to_minor, money_client_currency
 
 from .. import models
-from ..domain.errors import Refused
+from ..domain import ai_operations
+from ..domain.ai_operations import AiMode, AiOperation
+from ..domain.errors import Conflict, Invalid, NotFound, Refused
 from ..domain.messages import Message
 
 AiRisk = Literal["low", "medium", "high", "critical"]
-AiMode = Literal["deny", "allow_read", "require_approval", "allow_execute"]
 AiDecision = Literal["allowed", "denied", "approval_required", "applied", "failed"]
 AiSource = Literal["frontend", "mcp_http", "mcp_stdio", "backend"]
 
-AI_OPERATION_RESOURCES = [
-    "ai_context",
-    "transactions",
-    "accounts",
-    "monthly_plan_lines",
-    "budget_plans",
-    "auto_transactions",
-    "registry_entries",
-    "products",
-    "capsules",
-    "life_events",
-    "exchange_rates",
-    "data_transfer",
-    "data_export",
-    "client_settings",
-    "ai_settings",
-    "mfa_settings",
-]
-
-READ_ACTIONS = {"read", "list", "get", "preview", "analyze", "suggest", "optimize"}
-WRITE_ACTIONS = {"create", "update", "patch", "save", "apply", "delete", "import", "replace", "execute"}
 SENSITIVE_KEY_PARTS = (
     "password",
     "secret",
@@ -64,159 +41,115 @@ class AiOperationContext:
     resource: str = ""
     action: str = ""
     risk: AiRisk = "low"
-    ai_client_id: int | None = None
     mcp_client_id: str | None = None
     request_summary: dict[str, Any] = field(default_factory=dict)
     diff_summary: dict[str, Any] = field(default_factory=dict)
     mfa_verified: bool = False
     ip_address: str | None = None
     user_agent: str | None = None
-    amount: int | None = None
-    count: int | None = None
 
 
-@dataclass
-class AiOperationDecision:
-    decision: AiDecision
-    mode: AiMode
-    resource: str
-    action: str
-    risk: AiRisk
-    require_mfa: bool = False
-    reason: str = ""
-    policy_id: int | None = None
+# ─── WP36: one permission per operation ──────────────────────────────────────
+#
+# The person decides, for each operation in domain/ai_operations, whether the AI
+# may do it directly (allow), only through a change request a person approves
+# (approval), or not at all (deny). A row is saved only once the person sets it;
+# until then the operation's default applies (owner 2026-10-24, C8).
 
-    @property
-    def allowed(self) -> bool:
-        return self.decision == "allowed"
+def _saved_modes(db: Session, client_id: int) -> dict[str, AiMode]:
+    rows = db.query(models.AiOperationPolicy).filter(models.AiOperationPolicy.client_id == client_id).all()
+    return {row.operation: row.mode for row in rows if row.operation in ai_operations.BY_KEY}
 
 
-def normalize_resource(value: str) -> str:
-    return (value or "").strip().lower()
+def operation_mode(db: Session, client_id: int, key: str) -> AiMode:
+    operation = ai_operations.BY_KEY[key]
+    saved = db.query(models.AiOperationPolicy.mode).filter(
+        models.AiOperationPolicy.client_id == client_id, models.AiOperationPolicy.operation == key,
+    ).scalar()
+    return saved if saved in operation.modes else operation.default
 
 
-def normalize_action(value: str) -> str:
-    return (value or "").strip().lower()
+def ledger_write_is_direct(db: Session, client_id: int) -> bool:
+    """An approved change request that records a transaction posts it, rather than queueing it, only if allowed."""
+    return operation_mode(db, client_id, "transactions.create") == "allow"
 
 
-def normalize_risk(value: str) -> AiRisk:
-    normalized = (value or "low").strip().lower()
-    if normalized not in {"low", "medium", "high", "critical"}:
-        return "low"
-    return normalized  # type: ignore[return-value]
+def _operation_payload(operation: AiOperation, saved: dict[str, AiMode]) -> dict[str, Any]:
+    mode = saved.get(operation.key)
+    return {
+        "key": operation.key,
+        "section": operation.section,
+        "kind": operation.kind,
+        "ja": operation.ja,
+        "en": operation.en,
+        "risk": operation.risk,
+        "approval": operation.approval,
+        "by_write_mode": operation.by_write_mode,
+        "tools": list(operation.tools),
+        "modes": list(operation.modes),
+        "mode": mode if mode in operation.modes else operation.default,
+        "saved": mode in operation.modes,
+    }
 
 
-def default_policy_for(resource: str, action: str, risk: str) -> tuple[AiMode, bool, str]:
-    normalized_action = normalize_action(action)
-    normalized_risk = normalize_risk(risk)
+def list_operations(db: Session, client_id: int) -> dict[str, Any]:
+    """Every operation, grouped by section, with the mode in effect (saved, or the default)."""
+    saved = _saved_modes(db, client_id)
+    return {
+        "sections": [
+            {
+                "key": section.key, "ja": section.ja, "en": section.en,
+                "operations": [_operation_payload(operation, saved)
+                               for operation in ai_operations.OPERATIONS if operation.section == section.key],
+            }
+            for section in ai_operations.SECTIONS
+        ],
+        "local_tools": list(ai_operations.LOCAL_TOOLS),
+    }
 
-    if normalized_action in READ_ACTIONS:
-        return "allow_read", False, "Read and preview operations are allowed by default"
-    if normalized_risk == "critical":
-        return "require_approval", True, "Critical AI operations require approval and MFA by default"
-    if normalized_risk in {"medium", "high"} or normalized_action in WRITE_ACTIONS:
-        return "require_approval", False, "AI write operations require approval by default"
-    return "allow_execute", False, "Low-risk AI operation is allowed by default"
 
-
-def evaluate_ai_operation(
-    db: Session,
-    client_id: int,
-    context: AiOperationContext,
-) -> AiOperationDecision:
-    resource = normalize_resource(context.resource)
-    action = normalize_action(context.action)
-    risk = normalize_risk(context.risk)
-    policy = _find_policy(db, client_id, context.ai_client_id, resource, action, risk, context)
-
-    if policy:
-        mode = policy.mode
-        require_mfa = bool(policy.require_mfa)
-        reason = f"Matched policy {policy.id}"
-        policy_id = policy.id
+def set_operation_mode(db: Session, client_id: int, key: str, mode: str, expected: str | None) -> dict[str, Any]:
+    """Save one operation's mode. `expected` is the mode the screen showed: another change since is a conflict."""
+    operation = ai_operations.BY_KEY.get(key)
+    if operation is None:
+        raise NotFound("Unknown AI operation", ja="この操作は一覧にありません。")
+    if mode not in operation.modes:
+        raise Invalid("This operation cannot take that permission", ja="この操作にはその権限を選べません。")
+    row = db.query(models.AiOperationPolicy).filter(
+        models.AiOperationPolicy.client_id == client_id, models.AiOperationPolicy.operation == key,
+    ).first()
+    current = row.mode if row is not None and row.mode in operation.modes else operation.default
+    if expected is not None and expected != current:
+        raise Conflict("Changed elsewhere", ja="別の画面で変更されました。今の設定を読み込み直します。",
+                       payload={"error": "changed_elsewhere", "mode": current})
+    if row is None:
+        row = models.AiOperationPolicy(client_id=client_id, operation=key, mode=mode)
+        db.add(row)
     else:
-        mode, require_mfa, reason = default_policy_for(resource, action, risk)
-        policy_id = None
-
-    decision = _decision_from_mode(mode=mode, action=action, require_mfa=require_mfa, mfa_verified=context.mfa_verified)
-    return AiOperationDecision(
-        decision=decision,
-        mode=mode,  # type: ignore[arg-type]
-        resource=resource,
-        action=action,
-        risk=risk,
-        require_mfa=require_mfa,
-        reason=reason,
-        policy_id=policy_id,
-    )
-
-
-def ledger_write_is_direct(
-    db: Session,
-    client_id: int,
-    *,
-    ai_client_id: int | None,
-    risk: str,
-    mfa_verified: bool = False,
-) -> bool:
-    # Permission to bypass the ledger proposal queue differs from permission
-    # for the AI to act at all, even after its change request is approved.
-    decision = evaluate_ai_operation(
-        db,
-        client_id,
-        AiOperationContext(
-            resource="transactions",
-            action="create",
-            risk=normalize_risk(risk),
-            ai_client_id=ai_client_id,
-            mfa_verified=mfa_verified,
-        ),
-    )
-    return decision.mode == "allow_execute" and decision.allowed
-
-
-def assert_direct_ledger_write_allowed(
-    db: Session,
-    client_id: int,
-    *,
-    mcp_client_id: str | None,
-    risk: str = "medium",
-) -> None:
-    # Skipping policy evaluation keeps a human's own write out of the AI gate.
-    if not mcp_client_id:
-        return
-    if not ledger_write_is_direct(db, client_id, ai_client_id=None, risk=risk):
-        # 403 rather than 409: the request does not conflict with the ledger's
-        # state, the caller simply may not write it. Retrying changes nothing
-        # until a human opens the policy, so the message names it.
-        raise Refused(
-            (
-                "Direct MCP ledger write refused: the ai_operation_policies row for "
-                f"transactions / create / {risk} must have mode allow_execute and "
-                "have no unmet MFA requirement; otherwise use the change-request path."
-            ),
-        )
+        row.mode = mode
+        row.updated_at = datetime.utcnow()
+    db.commit()
+    return _operation_payload(operation, {key: mode})
 
 
 def write_ai_audit_log(
     db: Session,
     client_id: int,
     context: AiOperationContext,
-    decision: AiOperationDecision,
+    decision: AiDecision,
     result: dict[str, Any] | None = None,
     commit: bool = True,
 ) -> models.AiAuditLog:
     log = models.AiAuditLog(
         client_id=client_id,
         actor_client_id=client_id,
-        ai_client_id=context.ai_client_id,
         mcp_client_id=context.mcp_client_id,
         source=context.source,
         tool_name=context.tool_name,
-        resource=decision.resource,
-        action=decision.action,
-        risk=decision.risk,
-        decision=decision.decision,
+        resource=context.resource,
+        action=context.action,
+        risk=context.risk,
+        decision=decision,
         request_summary=redact_sensitive(context.request_summary),
         diff_summary=redact_sensitive(context.diff_summary),
         result_summary=redact_sensitive(result or {}),
@@ -234,56 +167,6 @@ def write_ai_audit_log(
     return log
 
 
-def ensure_ai_operation_allowed(
-    db: Session,
-    client_id: int,
-    context: AiOperationContext,
-) -> AiOperationDecision:
-    decision = evaluate_ai_operation(db, client_id, context)
-    if decision.decision != "allowed":
-        write_ai_audit_log(db, client_id, context, decision)
-        raise Refused(
-            decision.reason,
-            payload={
-                "error": "ai_operation_not_allowed",
-                "decision": decision.decision,
-                "resource": decision.resource,
-                "action": decision.action,
-                "risk": decision.risk,
-                "require_mfa": decision.require_mfa,
-                "reason": decision.reason,
-            },
-        )
-    return decision
-
-
-def replace_client_policies(
-    db: Session,
-    client_id: int,
-    policies: list[dict[str, Any]],
-) -> list[models.AiOperationPolicy]:
-    db.query(models.AiOperationPolicy).filter(models.AiOperationPolicy.client_id == client_id).delete()
-    rows: list[models.AiOperationPolicy] = []
-    for item in policies:
-        row = models.AiOperationPolicy(
-            client_id=client_id,
-            ai_client_id=item.get("ai_client_id"),
-            resource=normalize_resource(item["resource"]),
-            action=normalize_action(item["action"]),
-            risk=normalize_risk(item["risk"]),
-            mode=item["mode"],
-            threshold_amount_minor=to_minor(item.get("threshold_amount"), money_client_currency(db, client_id)),
-            threshold_count=item.get("threshold_count"),
-            require_mfa=bool(item.get("require_mfa", False)),
-        )
-        db.add(row)
-        rows.append(row)
-    db.commit()
-    for row in rows:
-        db.refresh(row)
-    return rows
-
-
 def list_audit_logs(
     db: Session, client_id: int, *, limit: int, offset: int,
 ) -> list[models.AiAuditLog]:
@@ -292,72 +175,8 @@ def list_audit_logs(
     ).order_by(models.AiAuditLog.created_at.desc(), models.AiAuditLog.id.desc()).offset(offset).limit(limit).all()
 
 
-def list_client_policies(db: Session, client_id: int) -> list[models.AiOperationPolicy]:
-    return db.query(models.AiOperationPolicy).filter(
-        models.AiOperationPolicy.client_id == client_id,
-    ).order_by(models.AiOperationPolicy.resource, models.AiOperationPolicy.action, models.AiOperationPolicy.risk).all()
-
-
 def redact_sensitive(value: Any, *, max_depth: int = 4) -> Any:
     return _redact(value, depth=0, max_depth=max_depth)
-
-
-def _find_policy(
-    db: Session,
-    client_id: int,
-    ai_client_id: int | None,
-    resource: str,
-    action: str,
-    risk: str,
-    context: AiOperationContext,
-) -> models.AiOperationPolicy | None:
-    candidates = db.query(models.AiOperationPolicy).filter(
-        models.AiOperationPolicy.client_id == client_id,
-        models.AiOperationPolicy.resource == resource,
-        models.AiOperationPolicy.action == action,
-        models.AiOperationPolicy.risk == risk,
-    ).all()
-
-    applicable = [
-        policy for policy in candidates
-        if policy.ai_client_id in (None, ai_client_id)
-        and _threshold_applies(policy, context)
-    ]
-    applicable.sort(key=lambda policy: 0 if policy.ai_client_id is None else 1, reverse=True)
-    return applicable[0] if applicable else None
-
-
-def _threshold_applies(policy: models.AiOperationPolicy, context: AiOperationContext) -> bool:
-    if policy.threshold_amount_minor is not None and context.amount is not None and context.amount < policy.threshold_amount_minor:
-        return False
-    if policy.threshold_count is not None and context.count is not None and context.count < policy.threshold_count:
-        return False
-    return True
-
-
-def has_amount_threshold(db, client_id, *, resource, action, risk, ai_client_id):
-    return db.query(models.AiOperationPolicy.id).filter(
-        models.AiOperationPolicy.client_id == client_id,
-        models.AiOperationPolicy.resource == resource,
-        models.AiOperationPolicy.action == action,
-        models.AiOperationPolicy.risk == risk,
-        or_(models.AiOperationPolicy.ai_client_id.is_(None), models.AiOperationPolicy.ai_client_id == ai_client_id),
-        models.AiOperationPolicy.threshold_amount_minor.is_not(None),
-    ).first() is not None
-
-
-def _decision_from_mode(mode: str, action: str, require_mfa: bool, mfa_verified: bool) -> AiDecision:
-    if mode == "deny":
-        return "denied"
-    if require_mfa and not mfa_verified and mode == "allow_execute":
-        return "denied"
-    if mode == "allow_read":
-        return "allowed" if action in READ_ACTIONS else "denied"
-    if mode == "allow_execute":
-        return "allowed"
-    if mode == "require_approval":
-        return "approval_required"
-    return "denied"
 
 
 def _redact(value: Any, *, depth: int, max_depth: int) -> Any:
@@ -406,19 +225,16 @@ AiAuthorization = Literal[
     "refused_scope", "refused_policy", "refused_mode", "failed",
 ]
 
-# Rows in these tables mean the request wrote the ledger, which only the
-# transactions/create policy row may allow directly (ai_write_path §1.6).
-LEDGER_TABLES = frozenset({"transactions", "journal_entries"})
 MAX_AUDITED_CHANGES = 200
 MAX_REQUEST_BODY_CHARS = 4000
 MAX_ERROR_CHARS = 1000
 REFUSED_ERROR = "ai_operation_refused"
 
-# What the AI may never do, whatever its policies and write mode say: change
+# What the AI may never do, whatever its permissions and write mode say: change
 # its own permissions, act on the account, or approve. Approval is a person's
 # decision (owner 2026-10-24); applying what a person approved stays open.
 _MCP_REFUSALS: tuple[tuple[str | None, re.Pattern, str], ...] = (
-    ("PUT", re.compile(r"^/ai/(policies|execution-settings)/?$"), "ai_permissions"),
+    ("PUT", re.compile(r"^/ai/(operations(/.*)?|execution-settings)/?$"), "ai_permissions"),
     (None, re.compile(r"^/ai/mcp(/|$)"), "ai_connections"),
     ("POST", re.compile(r"^/ai/change-requests/\d+/(approve|reject)/?$"), "human_approval"),
     ("POST", re.compile(r"^/transactions/proposals/\d+/(approve|reject)/?$"), "human_approval"),
@@ -427,15 +243,24 @@ _MCP_REFUSALS: tuple[tuple[str | None, re.Pattern, str], ...] = (
 
 REFUSAL_MESSAGES = {
     "ai_permissions": ("AI permissions are changed by a person in the app, not through MCP.",
-                       "AI の権限（ポリシー・書き込み方式）は MCP からは変更できません。アプリで変更してください。"),
+                       "AI の権限（操作ごとの権限・書き込み方式）は MCP からは変更できません。アプリで変更してください。"),
+    "operation_denied": ("This operation is not allowed for the AI in this client's settings.",
+                         "この操作は AI 操作の権限で禁止されています。"),
+    "operation_needs_approval": ("This operation needs a person's approval: create an AI change request instead.",
+                                 "この操作は承認が必要です。承認リクエストを作ってください。"),
+    "operation_unknown": ("This request is not one of the operations the AI may use.",
+                          "この要求は AI が使える操作の一覧にありません。"),
     "ai_connections": ("AI app connections are seen and ended by a person in the app, not through MCP.",
                        "AI アプリの接続は MCP からは見られず、切断もできません。アプリで操作してください。"),
     "human_approval": ("Approving or rejecting is a person's decision; do it in the app.",
                        "承認・却下は人が行います。アプリで操作してください。"),
     "account": ("Account operations are not available through MCP.",
                 "アカウントの操作は MCP からはできません。"),
-    "change_request_mode": ("Writes go through change requests in this client's settings; create an AI change request instead.",
-                            "この設定では書き込みは承認リクエスト経由です。承認リクエストを作成してください。"),
+    "change_request_mode": ("In this client's settings the AI writes only through change requests a person approves: "
+                            "for recording a transaction, updating a plan line, or creating or updating an automatic "
+                            "transaction, create an AI change request; other writes are not available.",
+                            "この設定では、AI の書き込みは人が承認する承認リクエスト経由だけです。取引の記録・計画の行の変更・"
+                            "自動取引の作成と変更は承認リクエストを作ってください。ほかの書き込みは使えません。"),
 }
 
 # Last path segments that name what a request does rather than what it acts on.
@@ -480,31 +305,32 @@ def mcp_write_mode_of(general_settings: dict | None) -> str:
 
 def mcp_request_is_operation(method: str, path: str) -> bool:
     """False for MCP requests that are plumbing, not something the AI did."""
-    if path.startswith("/health") or path.startswith("/auth/mcp/exchange"):
-        return False
-    # The MCP server asks for the write mode before every write it forwards.
-    return not (method == "GET" and path.rstrip("/") == "/ai/execution-settings")
-
-
-def _forwards_write(method: str, path: str) -> bool:
-    # The same test the MCP server applies before it forwards a write (api-client.ts).
-    if method in {"GET", "HEAD", "OPTIONS"}:
-        return False
-    if path.startswith(("/auth/", "/ai/change-requests", "/ai/execution-settings")) or path == "/ai/evaluate":
-        return False
-    return "/preview" not in path
+    return not (path.startswith("/health") or path.startswith("/auth/mcp/exchange"))
 
 
 def mcp_refusal(db: Session, client_id: int, method: str, path: str) -> str | None:
-    """Why the AI may not make this request at all, or None. Checked before the endpoint runs."""
+    """Why the AI may not make this request, or None. Checked before the endpoint runs.
+
+    In order: what the AI may never do; a request that is none of the operations it
+    may use; the person's permission for the operation (deny); the write mode (in
+    change-request mode a write goes through a change request); and a permission of
+    "approval" for a direct write (WP36).
+    """
     for refused_method, pattern, reason in _MCP_REFUSALS:
         if (refused_method is None or refused_method == method) and pattern.match(path):
             return reason
-    if _forwards_write(method, path):
-        client = db.get(models.Client, client_id)
-        if mcp_write_mode_of(client.general_settings if client else None) == "change_request":
-            return "change_request_mode"
-    return None
+    operation = ai_operations.match(method, path)
+    if operation is None:
+        return "operation_unknown"
+    mode = operation_mode(db, client_id, operation.key)
+    if mode == "deny":
+        return "operation_denied"
+    if operation.kind == "read" or not operation.by_write_mode:
+        return None
+    client = db.get(models.Client, client_id)
+    if mcp_write_mode_of(client.general_settings if client else None) == "change_request":
+        return "change_request_mode"
+    return "operation_needs_approval" if mode == "approval" else None
 
 
 def mcp_refusal_error(reason: str) -> Refused:
@@ -550,37 +376,43 @@ def _error_payload(error: Any) -> dict:
     return detail if isinstance(detail, dict) else error
 
 
+_POLICY_REFUSALS = frozenset({"operation_denied", "operation_needs_approval"})
+
+
 def _authorize(
-    db: Session, client_id: int, facts: McpRequestFacts, resource: str, action: str,
+    db: Session, client_id: int, facts: McpRequestFacts, operation: AiOperation | None,
 ) -> tuple[AiAuthorization, AiDecision, dict]:
     """What let the request through or stopped it, and the facts that show it."""
     client = db.get(models.Client, client_id)
     write_mode = mcp_write_mode_of(client.general_settings if client else None)
     detail: dict[str, Any] = {"mcp_write_mode": write_mode}
+    if operation is not None:
+        detail["operation"] = {"key": operation.key, "mode": operation_mode(db, client_id, operation.key)}
     error = _error_payload(facts.error)
     refusal = facts.refusal or (error.get("reason") if error.get("error") == REFUSED_ERROR else None)
     if refusal:
         detail["refusal"] = refusal
-        return ("refused_mode" if refusal == "change_request_mode" else "refused_scope"), "denied", detail
+        authorization: AiAuthorization = (
+            "refused_mode" if refusal == "change_request_mode"
+            else "refused_policy" if refusal in _POLICY_REFUSALS else "refused_scope"
+        )
+        return authorization, "denied", detail
     if facts.status in {401, 403}:
         return "refused_policy", "denied", detail
     if facts.status >= 400:
         return "failed", "failed", detail
-    if facts.method in {"GET", "HEAD"} or action in {"preview", "evaluate"}:
+    if operation is None:
+        # Only rows restored from the logs of requests made before the operation list.
+        return ("read", "allowed", detail) if facts.method in {"GET", "HEAD"} else ("direct_mode", "applied", detail)
+    if operation.kind == "read":
         return "read", "allowed", detail
-    if resource == "ai.change_requests" and action == "create":
+    if operation.key == "change_requests.create":
         return "change_request", "approval_required", detail
-    if resource == "ai.change_requests" and action == "apply":
+    if operation.key == "change_requests.apply":
         # Only a person can approve (the refusals above), so an applied request was approved by one.
         return "human_approved", "applied", detail
-    if any(change.get("table") in LEDGER_TABLES for change in facts.changes):
-        gate = evaluate_ai_operation(db, client_id, AiOperationContext(resource="transactions", action="create", risk="medium"))
-        detail["policy"] = {
-            "id": gate.policy_id, "resource": "transactions", "action": "create", "risk": "medium",
-            "mode": gate.mode, "require_mfa": gate.require_mfa,
-        }
-        return "direct_policy", "applied", detail
-    return "direct_mode", "applied", detail
+    # A direct write runs only with the operation's permission at "allow" (WP36).
+    return "direct_policy", "applied", detail
 
 
 def _compact_changes(changes: list[dict]) -> dict:
@@ -622,11 +454,14 @@ def record_mcp_operation(db: Session, client_id: int, facts: McpRequestFacts) ->
     read) gets that row completed rather than a second one: one operation, one row.
     """
     resource, action, risk, target = describe_mcp_request(facts.method, facts.path)
+    operation = ai_operations.match(facts.method, facts.path)
+    if operation is not None:
+        resource, action, risk = operation.resource, operation.action, operation.risk
     own_rows = [change.get("pk") for change in facts.changes
                 if change.get("table") == "ai_audit_logs" and change.get("op") == "insert"]
     changes = [change for change in facts.changes if change.get("table") != "ai_audit_logs"]
     facts = replace(facts, changes=changes)
-    authorization, decision, detail = _authorize(db, client_id, facts, resource, action)
+    authorization, decision, detail = _authorize(db, client_id, facts, operation)
     result: dict[str, Any] = {"status": facts.status, "authorization": detail}
     if facts.duration_ms is not None:
         result["duration_ms"] = facts.duration_ms
@@ -648,7 +483,7 @@ def record_mcp_operation(db: Session, client_id: int, facts: McpRequestFacts) ->
         if changes:
             row.diff_summary = {**(row.diff_summary or {}), **_compact_changes(changes)}
     if not rows:
-        approval_request_id = target if resource == "ai.change_requests" and action == "apply" else None
+        approval_request_id = target if operation is not None and operation.key == "change_requests.apply" else None
         row = models.AiAuditLog(
             client_id=client_id,
             actor_client_id=client_id,

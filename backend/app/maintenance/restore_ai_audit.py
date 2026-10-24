@@ -75,7 +75,13 @@ def collect(lines: Iterable[str], client_id: int) -> list[_Request]:
         request for request in requests.values()
         if request.end is not None
         and ai_policy_service.mcp_request_is_operation(request.start.get("method", ""), request.start.get("path", ""))
+        and not _write_mode_check(request.start)
     ]
+
+
+def _write_mode_check(start: dict) -> bool:
+    """Until WP36 the MCP server read the write mode before every write it forwarded: not the AI's operation."""
+    return start.get("method") == "GET" and str(start.get("path", "")).rstrip("/") == "/ai/execution-settings"
 
 
 def facts_of(request: _Request) -> McpRequestFacts:

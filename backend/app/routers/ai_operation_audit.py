@@ -3,9 +3,11 @@
 Sits inside RequestLogMiddleware, which has bound the request context from the
 bearer token (chn=mcp). For each request on the MCP channel it
 
-1. refuses what the AI may never do -- change its own permissions, act on the
-   account, approve -- and, in change-request mode, any direct write, before an
-   endpoint runs (ai_policy_service.mcp_refusal);
+1. refuses, before an endpoint runs (ai_policy_service.mcp_refusal), what the AI
+   may never do -- change its own permissions, act on the account, approve --
+   and any request that is none of the operations in domain/ai_operations; then
+   applies the person's permission for the operation (deny, or approval for a
+   direct write) and, in change-request mode, refuses direct writes (WP36);
 2. lets everything else through, collecting the rows the request committed; and
 3. writes one ai_audit_logs row saying what the AI did and what let it through
    or stopped it (ai_policy_service.record_mcp_operation).

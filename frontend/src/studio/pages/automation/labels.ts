@@ -2,7 +2,7 @@ import type { AiAuthorization, AiChangeRequestStatus, AiOperationDecision, AiOpe
 import { labels, tr } from '../../i18n';
 
 export const MODE_LABELS = labels<AiOperationMode>({
-    deny: ['拒否', 'Deny'], allow_read: ['読み取りのみ許可', 'Read only'], require_approval: ['承認が必要', 'Needs approval'], allow_execute: ['実行を許可', 'Allow'],
+    allow: ['許可', 'Allow'], approval: ['承認が必要', 'Needs approval'], deny: ['禁止', 'Deny'],
 });
 export const RISK_LABELS = labels<AiOperationRisk>({
     low: ['低', 'Low'], medium: ['中', 'Medium'], high: ['高', 'High'], critical: ['重大', 'Critical'],
@@ -30,12 +30,13 @@ export const DECISION_LABELS = labels<AiOperationDecision>({
 /** What let an AI operation through or stopped it (WP34). */
 export const AUTHORIZATION_LABELS = labels<AiAuthorization>({
     read: ['読み取り', 'Read'],
-    direct_policy: ['直接記帳（権限ルールで許可）', 'Posted directly (allowed by a permission rule)'],
+    direct_policy: ['直接実行（操作の権限で許可）', 'Ran directly (allowed by the operation’s permission)'],
+    // Only rows from before the operation list (WP36).
     direct_mode: ['直接書き込み（書き込み方式で許可）', 'Written directly (allowed by the write mode)'],
     change_request: ['承認リクエストを作成', 'Change request created'],
     human_approved: ['人の承認の後に適用', 'Applied after a person approved'],
     refused_scope: ['拒否（AI には許されない操作）', 'Refused (not allowed to the AI)'],
-    refused_policy: ['拒否（権限ルール）', 'Refused (permission rule)'],
+    refused_policy: ['拒否（操作の権限）', 'Refused (the operation’s permission)'],
     refused_mode: ['拒否（承認リクエスト方式）', 'Refused (change-request mode)'],
     failed: ['失敗', 'Failed'],
 });

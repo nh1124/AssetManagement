@@ -153,7 +153,8 @@ export interface MfaReplacementResult extends MfaRecoveryCodes {
 export type MfaFactor = { code: string; recovery_code?: never } | { recovery_code: string; code?: never };
 
 export type AiOperationRisk = 'low' | 'medium' | 'high' | 'critical';
-export type AiOperationMode = 'deny' | 'allow_read' | 'require_approval' | 'allow_execute';
+/** approval: only through a change request a person approves (WP36). */
+export type AiOperationMode = 'allow' | 'approval' | 'deny';
 export type AiOperationDecision = 'allowed' | 'denied' | 'approval_required' | 'applied' | 'failed';
 export type AiOperationSource = 'frontend' | 'mcp_http' | 'mcp_stdio' | 'backend';
 export type AiChangeRequestStatus = 'draft' | 'pending' | 'approved' | 'applied' | 'rejected' | 'expired' | 'failed';
@@ -165,7 +166,6 @@ export type AiAuthorization =
 
 export interface AiExecutionSettings {
     mcp_write_mode: AiMcpWriteMode;
-    supported_change_request_operations: string[];
 }
 
 /** An AI app the person connected over MCP (WP35). */
@@ -191,28 +191,42 @@ export interface McpConnections {
     connections: McpConnection[];
 }
 
-export interface AiOperationPolicy {
-    id: number;
-    client_id: number;
-    ai_client_id?: number | null;
-    resource: string;
-    action: string;
+/** One AI operation and the permission in effect for it (WP36, backend domain/ai_operations). */
+export interface AiOperationEntry {
+    key: string;
+    section: string;
+    kind: 'read' | 'write';
+    ja: string;
+    en: string;
     risk: AiOperationRisk;
+    /** A change request can carry it; only then is "approval" one of its modes. */
+    approval: boolean;
+    /** Refused in change-request mode (the change-request operations themselves are not). */
+    by_write_mode: boolean;
+    tools: string[];
+    modes: AiOperationMode[];
     mode: AiOperationMode;
-    threshold_amount?: number | null;
-    threshold_count?: number | null;
-    require_mfa: boolean;
-    created_at: string;
-    updated_at: string;
+    /** False: nothing saved, the operation's default applies. */
+    saved: boolean;
 }
 
-export type AiOperationPolicyPayload = Omit<AiOperationPolicy, 'id' | 'client_id' | 'created_at' | 'updated_at'>;
+export interface AiOperationSection {
+    key: string;
+    ja: string;
+    en: string;
+    operations: AiOperationEntry[];
+}
+
+export interface AiOperations {
+    sections: AiOperationSection[];
+    /** MCP tools that only compute; no permission applies to them. */
+    local_tools: string[];
+}
 
 export interface AiAuditLog {
     id: number;
     client_id: number;
     actor_client_id?: number | null;
-    ai_client_id?: number | null;
     mcp_client_id?: string | null;
     source: AiOperationSource;
     tool_name?: string | null;
@@ -245,14 +259,12 @@ export interface AiChangeRequestPreview {
     diff: Record<string, unknown>;
     validation: Record<string, unknown>;
     precondition_hash?: string | null;
-    requires_mfa: boolean;
 }
 
 export interface AiChangeRequest extends AiChangeRequestPreview {
     id: number;
     client_id: number;
     created_by_client_id?: number | null;
-    ai_client_id?: number | null;
     mcp_client_id?: string | null;
     source: AiOperationSource;
     tool_name?: string | null;

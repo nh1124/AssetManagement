@@ -22,6 +22,7 @@ import Comparison from './pages/goals/Comparison';
 import Simulation from './pages/goals/Simulation';
 import Ai from './pages/automation/Ai';
 import Approvals from './pages/automation/Approvals';
+import Connections from './pages/automation/Connections';
 import Audit from './pages/automation/Audit';
 import DatabaseAccounts from './pages/db/Accounts';
 import Fx from './pages/db/Fx';
@@ -50,6 +51,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
         tabs: { accounts: <Accounts /> },
     },
     'automation/ai': { index: <Ai /> },
+    'automation/connections': { index: <Connections /> },
     'automation/approvals': { index: <Approvals /> },
     'automation/audit': { index: <Audit /> },
     'db/accounts': { index: <DatabaseAccounts /> },

@@ -7,7 +7,7 @@ from .. import models, schemas
 from ..config import settings
 from ..database import get_db
 from ..dependencies import get_current_client, mcp_client_id as request_mcp_client_id, request_language
-from ..domain.errors import NotFound, Refused, detail_for, status_for
+from ..domain.errors import DomainError, NotFound, Refused, detail_for, status_for
 from ..services import mcp_connection_service
 from ..utils.jwt import token_is_current
 from ..services.ai_context_service import (
@@ -16,13 +16,11 @@ from ..services.ai_context_service import (
     list_context_resources,
 )
 from ..services.ai_policy_service import (
-    AiOperationDecision,
     AiOperationContext,
-    evaluate_ai_operation,
     list_audit_logs,
-    list_client_policies,
+    list_operations,
     mcp_write_mode_of,
-    replace_client_policies,
+    set_operation_mode,
     write_ai_audit_log,
 )
 from ..services.client_settings_service import merge_ai_execution_settings
@@ -30,40 +28,32 @@ from ..services.client_settings_service import merge_ai_execution_settings
 
 router = APIRouter(prefix="/ai", tags=["ai-operations"])
 
-SUPPORTED_CHANGE_REQUEST_OPERATIONS = [
-    "transactions:create",
-    "monthly_plan_lines:update",
-    "auto_transactions:create",
-    "auto_transactions:update",
-]
-
-
 def _execution_settings_payload(current_client: models.Client) -> dict:
-    return {
-        "mcp_write_mode": mcp_write_mode_of(current_client.general_settings),
-        "supported_change_request_operations": SUPPORTED_CHANGE_REQUEST_OPERATIONS,
-    }
+    return {"mcp_write_mode": mcp_write_mode_of(current_client.general_settings)}
 
 
-@router.get("/policies", response_model=list[schemas.AiOperationPolicy])
-def get_ai_policies(
+@router.get("/operations", response_model=schemas.AiOperations)
+def get_ai_operations(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    return list_client_policies(db, current_client.id)
+    """Every operation the AI can perform, by section, with the permission in effect (WP36)."""
+    return list_operations(db, current_client.id)
 
 
-@router.put("/policies", response_model=list[schemas.AiOperationPolicy])
-def put_ai_policies(
-    policies: list[schemas.AiOperationPolicyCreate],
+@router.put("/operations/{operation_key}", response_model=schemas.AiOperationEntry)
+def put_ai_operation(
+    operation_key: str,
+    payload: schemas.AiOperationUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    return replace_client_policies(
-        db,
-        current_client.id,
-        [policy.model_dump() for policy in policies],
-    )
+    """Set one operation's permission. A change made elsewhere since the screen loaded is a 409."""
+    try:
+        return set_operation_mode(db, current_client.id, operation_key, payload.mode, payload.expected_mode)
+    except DomainError as error:
+        raise HTTPException(status_code=status_for(error), detail=detail_for(error, request_language(request)))
 
 
 @router.get("/execution-settings", response_model=schemas.AiExecutionSettings)
@@ -155,9 +145,9 @@ def get_ai_context_resources(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    context, decision = _ensure_context_read_allowed(db, current_client, request, "resources")
+    context = _context_read(current_client, request, "resources")
     data = list_context_resources()
-    _write_context_read_audit(db, current_client, context, decision, {"count": len(data)})
+    _write_context_read_audit(db, current_client, context, {"count": len(data)})
     return data
 
 
@@ -167,9 +157,9 @@ def get_ai_context_summary(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    context, decision = _ensure_context_read_allowed(db, current_client, request, "summary")
+    context = _context_read(current_client, request, "summary")
     data = get_context_summary(db, current_client.id)
-    _write_context_read_audit(db, current_client, context, decision, {"resource": "summary"})
+    _write_context_read_audit(db, current_client, context, {"resource": "summary"})
     return data
 
 
@@ -182,14 +172,7 @@ def get_ai_context_resource(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    context, decision = _ensure_context_read_allowed(
-        db,
-        current_client,
-        request,
-        resource,
-        limit=limit,
-        period=period,
-    )
+    context = _context_read(current_client, request, resource, limit=limit, period=period)
     try:
         data = get_context_resource(db, current_client.id, resource, limit=limit, period=period)
     except (NotFound, Refused) as exc:
@@ -197,7 +180,6 @@ def get_ai_context_resource(
             db,
             current_client,
             context,
-            decision,
             {"error": detail_for(exc), "status_code": status_for(exc)},
         )
         raise
@@ -205,59 +187,20 @@ def get_ai_context_resource(
         db,
         current_client,
         context,
-        decision,
         {"resource": data["resource"], "classification": data["classification"]},
     )
     return data
 
 
-@router.post("/evaluate", response_model=schemas.AiOperationEvaluateResponse)
-def evaluate_ai_operation_api(
-    payload: schemas.AiOperationEvaluateRequest,
-    request: Request,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    # The token-bound client wins over whatever the payload names (WP34).
-    mcp_client_id = request_mcp_client_id() or payload.mcp_client_id
-    tool_name = payload.tool_name or request.headers.get("x-mcp-tool-name")
-    source = "mcp_http" if mcp_client_id and payload.source == "backend" else payload.source
-    context = AiOperationContext(
-        source=source,
-        tool_name=tool_name,
-        resource=payload.resource,
-        action=payload.action,
-        risk=payload.risk,
-        ai_client_id=payload.ai_client_id,
-        mcp_client_id=mcp_client_id,
-        request_summary=payload.request_summary,
-        diff_summary=payload.diff_summary,
-        mfa_verified=payload.mfa_verified,
-        ip_address=payload.ip_address or (request.client.host if request.client else None),
-        user_agent=payload.user_agent or request.headers.get("user-agent"),
-    )
-    decision = evaluate_ai_operation(db, current_client.id, context)
-    write_ai_audit_log(db, current_client.id, context, decision, result={"decision": decision.decision})
-    return {
-        "decision": decision.decision,
-        "mode": decision.mode,
-        "resource": decision.resource,
-        "action": decision.action,
-        "risk": decision.risk,
-        "require_mfa": decision.require_mfa,
-        "reason": decision.reason,
-    }
-
-
-def _ensure_context_read_allowed(
-    db: Session,
+def _context_read(
     current_client: models.Client,
     request: Request,
     context_resource: str,
     *,
     limit: int | None = None,
     period: str | None = None,
-) -> tuple[AiOperationContext, AiOperationDecision]:
+) -> AiOperationContext:
+    """The audit context of a context read. The gateway has already applied the ai_context.read permission."""
     mcp_client_id = request_mcp_client_id()
     source = "mcp_http" if mcp_client_id else "backend"
     context = AiOperationContext(
@@ -275,32 +218,13 @@ def _ensure_context_read_allowed(
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
-    decision = evaluate_ai_operation(db, current_client.id, context)
-    if decision.decision != "allowed":
-        write_ai_audit_log(
-            db,
-            current_client.id,
-            context,
-            decision,
-            result={"decision": decision.decision, "reason": decision.reason},
-        )
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "ai_context_read_not_allowed",
-                "decision": decision.decision,
-                "resource": decision.resource,
-                "reason": decision.reason,
-            },
-        )
-    return context, decision
+    return context
 
 
 def _write_context_read_audit(
     db: Session,
     current_client: models.Client,
     context: AiOperationContext,
-    decision: AiOperationDecision,
     result: dict,
 ) -> None:
-    write_ai_audit_log(db, current_client.id, context, decision, result=result)
+    write_ai_audit_log(db, current_client.id, context, "allowed", result=result)

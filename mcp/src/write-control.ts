@@ -1,28 +1,20 @@
-import { api } from "./api-client.js";
+import { api, ApiError } from "./api-client.js";
 import { toStructured } from "./utils.js";
-
-type McpWriteMode = "direct_write" | "change_request";
-
-interface AiExecutionSettings {
-  mcp_write_mode: McpWriteMode;
-  supported_change_request_operations: string[];
-}
 
 interface ChangeRequestInput {
   resource: string;
   action: string;
-  risk: "low" | "medium" | "high" | "critical";
   target_ref?: Record<string, unknown>;
   input_payload?: Record<string, unknown>;
 }
 
-export async function getAiExecutionSettings(): Promise<AiExecutionSettings> {
-  return api.get<AiExecutionSettings>("/ai/execution-settings");
-}
+// The backend's refusals a change request can take over (WP36): the change-request write
+// mode, and an operation whose permission is "needs approval". The backend decides and
+// records; the MCP server does not read the write mode before a write.
+const CHANGE_REQUEST_REFUSALS = new Set(["change_request_mode", "operation_needs_approval"]);
 
-export async function shouldCreateChangeRequest(): Promise<boolean> {
-  const settings = await getAiExecutionSettings();
-  return settings.mcp_write_mode === "change_request";
+export function needsChangeRequest(error: unknown): boolean {
+  return error instanceof ApiError && error.refusal !== undefined && CHANGE_REQUEST_REFUSALS.has(error.refusal);
 }
 
 export async function createChangeRequestResult(input: ChangeRequestInput) {
@@ -35,28 +27,29 @@ export async function createChangeRequestResult(input: ChangeRequestInput) {
     content: [{
       type: "text" as const,
       text:
-        `Change request mode is enabled in Settings. Created approval request${idText}; no direct write was applied.\n` +
-        "Open Approval Inbox to review, approve, and apply it.\n\n" +
+        `This write needs a person's approval (the write mode or the operation's permission in the app). Created approval request${idText}; no direct write was applied.\n` +
+        "A person reviews, approves and applies it in the app's approval requests.\n\n" +
         JSON.stringify(data, null, 2),
     }],
     structuredContent: toStructured(data),
   };
 }
 
-export function changeRequestUnsupportedResult(operation: string) {
-  const data = {
-    blocked: true,
-    operation,
-    reason: "change_request_required",
-    message:
-      "Change request mode is enabled in Settings, but this MCP operation is not yet supported by the approval buffer. No direct write was applied.",
-  };
+/** The direct write; when the backend answers that it needs approval, a change request for it instead. */
+export async function writeOrRequestChange(label: string, write: () => Promise<unknown>, request: ChangeRequestInput) {
+  let data: unknown;
+  try {
+    data = await write();
+  } catch (error) {
+    if (needsChangeRequest(error)) return createChangeRequestResult(request);
+    throw error;
+  }
   return {
-    content: [{ type: "text" as const, text: data.message }],
+    content: [{ type: "text" as const, text: directWriteMessage(label, data) }],
     structuredContent: toStructured(data),
   };
 }
 
 export function directWriteMessage(label: string, data: unknown): string {
-  return `Direct write mode is enabled in Settings. ${label}:\n${JSON.stringify(data, null, 2)}`;
+  return `Direct write (allowed without approval). ${label}:\n${JSON.stringify(data, null, 2)}`;
 }

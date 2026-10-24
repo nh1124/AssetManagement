@@ -15,7 +15,7 @@ ProductBudgetTreatmentLiteral = Literal["auto", "expense_only", "reserve_allocat
 MonthlyPlanCashTreatmentLiteral = Literal["auto", "cash", "non_cash"]
 LiabilityPaymentPolicyLiteral = Literal["full", "minimum", "fixed", "installment", "revolving"]
 AiOperationRiskLiteral = Literal["low", "medium", "high", "critical"]
-AiOperationModeLiteral = Literal["deny", "allow_read", "require_approval", "allow_execute"]
+AiOperationModeLiteral = Literal["allow", "approval", "deny"]
 AiOperationDecisionLiteral = Literal["allowed", "denied", "approval_required", "applied", "failed"]
 AiOperationSourceLiteral = Literal["frontend", "mcp_http", "mcp_stdio", "backend"]
 AiAuthorizationLiteral = Literal[
@@ -68,36 +68,49 @@ class Account(AccountBase):
         from_attributes = True
 
 
-class AiOperationPolicyBase(BaseModel):
-    ai_client_id: Optional[int] = None
-    resource: str
-    action: str
+class AiOperationEntry(BaseModel):
+    """One AI operation and the permission in effect for it (WP36, domain/ai_operations)."""
+    key: str
+    section: str
+    kind: Literal["read", "write"]
+    ja: str
+    en: str
     risk: AiOperationRiskLiteral
+    # A change request can carry it; only then is "approval" one of its modes.
+    approval: bool
+    # Refused in change-request mode (the change-request operations themselves are not).
+    by_write_mode: bool
+    tools: list[str]
+    modes: list[AiOperationModeLiteral]
     mode: AiOperationModeLiteral
-    threshold_amount: Optional[float] = None
-    threshold_count: Optional[int] = None
-    require_mfa: bool = False
+    # False: no setting saved, the operation's default applies.
+    saved: bool
 
 
-class AiOperationPolicyCreate(AiOperationPolicyBase):
-    pass
+class AiOperationSection(BaseModel):
+    key: str
+    ja: str
+    en: str
+    operations: list[AiOperationEntry]
 
 
-class AiOperationPolicy(AiOperationPolicyBase):
-    id: int
-    client_id: int
-    created_at: datetime
-    updated_at: datetime
+class AiOperations(BaseModel):
+    sections: list[AiOperationSection]
+    # MCP tools that only compute; no permission applies to them.
+    local_tools: list[str]
 
-    class Config:
-        from_attributes = True
+
+class AiOperationUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: AiOperationModeLiteral
+    # The mode the screen showed; another change since then is refused as a conflict.
+    expected_mode: Optional[AiOperationModeLiteral] = None
 
 
 class AiAuditLog(BaseModel):
     id: int
     client_id: int
     actor_client_id: Optional[int] = None
-    ai_client_id: Optional[int] = None
     mcp_client_id: Optional[str] = None
     source: AiOperationSourceLiteral
     tool_name: Optional[str] = None
@@ -122,34 +135,8 @@ class AiAuditLog(BaseModel):
         from_attributes = True
 
 
-class AiOperationEvaluateRequest(BaseModel):
-    source: AiOperationSourceLiteral = "backend"
-    tool_name: Optional[str] = None
-    resource: str
-    action: str
-    risk: AiOperationRiskLiteral = "low"
-    ai_client_id: Optional[int] = None
-    mcp_client_id: Optional[str] = None
-    request_summary: dict[str, Any] = Field(default_factory=dict)
-    diff_summary: dict[str, Any] = Field(default_factory=dict)
-    mfa_verified: bool = False
-    ip_address: Optional[str] = None
-    user_agent: Optional[str] = None
-
-
-class AiOperationEvaluateResponse(BaseModel):
-    decision: str
-    mode: AiOperationModeLiteral
-    resource: str
-    action: str
-    risk: AiOperationRiskLiteral
-    require_mfa: bool = False
-    reason: str
-
-
 class AiExecutionSettings(BaseModel):
     mcp_write_mode: AiMcpWriteModeLiteral = "direct_write"
-    supported_change_request_operations: list[str] = Field(default_factory=list)
 
 
 class McpConnection(BaseModel):
@@ -200,14 +187,11 @@ class AiChangeRequestBase(BaseModel):
     tool_name: Optional[str] = None
     resource: str
     action: str
-    risk: AiOperationRiskLiteral = "medium"
-    ai_client_id: Optional[int] = None
     mcp_client_id: Optional[str] = None
     target_ref: dict[str, Any] = Field(default_factory=dict)
     input_payload: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: Optional[str] = None
     expires_at: Optional[datetime] = None
-    mfa_verified: bool = False
 
 
 class AiChangeRequestPreviewRequest(AiChangeRequestBase):
@@ -233,14 +217,12 @@ class AiChangeRequestPreview(BaseModel):
     diff: dict[str, Any] = Field(default_factory=dict)
     validation: dict[str, Any] = Field(default_factory=dict)
     precondition_hash: Optional[str] = None
-    requires_mfa: bool = False
 
 
 class AiChangeRequest(AiChangeRequestPreview):
     id: int
     client_id: int
     created_by_client_id: Optional[int] = None
-    ai_client_id: Optional[int] = None
     mcp_client_id: Optional[str] = None
     source: AiOperationSourceLiteral
     tool_name: Optional[str] = None

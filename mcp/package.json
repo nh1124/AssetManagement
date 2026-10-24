@@ -18,6 +18,7 @@
     "test:oauth-redirect-uri": "node --import tsx scripts/oauth-redirect-uri.mts",
     "test:oauth-token-audience": "node --import tsx scripts/oauth-token-audience.mts",
     "test:tool-structured-content": "node --import tsx scripts/tool-structured-content.mts",
+    "test:write-routing": "node --import tsx scripts/write-routing.mts",
     "security:config": "node scripts/security-config.mjs",
     "check:node-modules": "node scripts/check-node-modules.mjs",
     "smoke": "node scripts/smoke.mjs",

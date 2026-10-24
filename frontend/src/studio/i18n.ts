@@ -66,6 +66,7 @@ const dictionary = {
     'screen.consumables': ['消耗品', 'Consumables'],
     'screen.earmarks': ['取り置き', 'Earmarks'],
     'screen.ai': ['AI操作', 'AI operations'],
+    'screen.connections': ['AIアプリの接続', 'AI app connections'],
     'screen.approvals': ['承認リクエスト', 'Approval requests'],
     'screen.audit': ['監査ログ', 'Audit log'],
     'tab.records': ['すべての記録', 'All records'],

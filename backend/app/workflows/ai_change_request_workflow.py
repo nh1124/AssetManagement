@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import date, datetime
-from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 from types import SimpleNamespace
@@ -14,8 +13,6 @@ from .. import models, schemas
 from ..domain.errors import Conflict, Invalid, NotFound, Refused
 from ..domain.messages import Message, message_of
 from ..domain.money import Money
-from ..services.money_storage import money_client_currency
-from ..services.fx_service import get_exchange_rate
 from ..services import ai_change_request_store, mfa_service
 from ..services.fx_service import get_client_currency
 from ..services.ledger_service import (
@@ -29,21 +26,34 @@ from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
 from ..services.registry_service import get_entry, create_entry, update_entry, validate_account_refs, normalize_schedule, client_today, SCHEDULE_FIELDS
 from ..services.schedule_rules import next_occurrence
+from ..domain import ai_operations
 from ..services.ai_policy_service import (
     AiOperationContext,
-    evaluate_ai_operation,
-    has_amount_threshold,
     ledger_write_is_direct,
+    operation_mode,
     write_ai_audit_log,
 )
 
 
+# What a change request can carry, and the AI operation whose permission judges it (WP36).
 SUPPORTED_OPERATIONS = {
-    ("transactions", "create"),
-    ("monthly_plan_lines", "update"),
-    ("auto_transactions", "create"),
-    ("auto_transactions", "update"),
+    ("transactions", "create"): "transactions.create",
+    ("monthly_plan_lines", "update"): "plan_lines.update",
+    ("auto_transactions", "create"): "auto_transactions.create",
+    ("auto_transactions", "update"): "auto_transactions.update",
 }
+
+
+def _refuse_if_denied(db: Session, client_id: int, key: str) -> None:
+    """A change request cannot carry an operation the person denied the AI, at creation or at apply."""
+    if operation_mode(db, client_id, key) == "deny":
+        operation = ai_operations.BY_KEY[key]
+        raise Refused(
+            "This operation is not allowed for the AI in this client's settings.",
+            ja="この操作は AI 操作の権限で禁止されています。",
+            payload={"error": "ai_operation_denied", "operation": key,
+                     "message": Message(f"{operation.en} is not allowed for the AI.", ja=f"「{operation.ja}」は AI 操作の権限で禁止されています。")},
+        )
 
 
 def _jsonable(value: Any) -> Any:
@@ -224,25 +234,12 @@ def preview_change_request(
     except ValueError as exc:
         raise Invalid(message_of(exc)) from exc
 
-    context = _operation_context(db, client_id, payload, resource, action, preview)
-    decision = evaluate_ai_operation(db, client_id, context)
-    if decision.decision == "denied":
-        raise Refused(
-            decision.reason,
-            payload={
-                "error": "ai_operation_denied",
-                "resource": decision.resource,
-                "action": decision.action,
-                "risk": decision.risk,
-                "reason": decision.reason,
-            },
-        )
-    requires_mfa = decision.require_mfa or decision.risk == "critical"
+    key = SUPPORTED_OPERATIONS[(resource, action)]
+    _refuse_if_denied(db, client_id, key)
     return {
         "resource": resource,
         "action": action,
-        "risk": decision.risk,
-        "requires_mfa": requires_mfa,
+        "risk": ai_operations.BY_KEY[key].risk,
         **preview,
     }
 
@@ -266,7 +263,6 @@ def create_change_request(
 
     fields = dict(
         created_by_client_id=actor_client_id,
-        ai_client_id=payload.ai_client_id,
         mcp_client_id=payload.mcp_client_id,
         source=payload.source,
         tool_name=payload.tool_name,
@@ -282,19 +278,18 @@ def create_change_request(
         validation=preview["validation"],
         idempotency_key=idempotency_key,
         precondition_hash=preview["precondition_hash"],
-        requires_mfa=preview["requires_mfa"],
         expires_at=payload.expires_at,
         result={},
     )
     row = ai_change_request_store.create(db, client_id, fields, commit=False)
 
-    context = _operation_context(db, client_id, payload, preview["resource"], preview["action"], preview)
-    decision = evaluate_ai_operation(db, client_id, context)
+    context = _operation_context(payload, preview)
+    # A change request always waits for a person, whatever the operation's permission (WP36).
     log = write_ai_audit_log(
         db,
         client_id,
         context,
-        decision,
+        "approval_required",
         result={"change_request_id": row.id, "status": row.status},
         commit=False,
     )
@@ -329,11 +324,11 @@ def approve_change_request(
             f"Change request cannot be approved from status {row.status}",
             ja=f"この状態（{row.status}）の承認リクエストは承認できません。",
         )
-    if row.requires_mfa:
-        if not mfa_service.mfa_enabled(db, actor_client_id):
-            raise Refused("MFA setup required", ja="先にMFAを設定してください。")
-        if not step_up_token_payload or step_up_token_payload.get("type") != "step_up" or str(step_up_token_payload.get("sub")) != str(actor_client_id):
-            raise Refused("Step-up authentication required", ja="認証アプリのコードで本人確認をしてください。", status_code=401)
+    # Every approval is confirmed with the authenticator code (owner 2026-10-24, C10).
+    if not mfa_service.mfa_enabled(db, actor_client_id):
+        raise Refused("MFA setup required", ja="先にMFAを設定してください。")
+    if not step_up_token_payload or step_up_token_payload.get("type") != "step_up" or str(step_up_token_payload.get("sub")) != str(actor_client_id):
+        raise Refused("Step-up authentication required", ja="認証アプリのコードで本人確認をしてください。", status_code=401)
     row.status = "approved"
     row.approved_by_client_id = actor_client_id
     row.approved_at = datetime.utcnow()
@@ -383,8 +378,6 @@ def refresh_preview(
         tool_name=row.tool_name,
         resource=row.resource,
         action=row.action,
-        risk=row.risk,
-        ai_client_id=row.ai_client_id,
         mcp_client_id=row.mcp_client_id,
         target_ref=row.target_ref,
         input_payload=row.input_payload,
@@ -395,7 +388,7 @@ def refresh_preview(
     row.diff = preview["diff"]
     row.validation = preview["validation"]
     row.precondition_hash = preview["precondition_hash"]
-    row.requires_mfa = preview["requires_mfa"]
+    row.risk = preview["risk"]
     if row.status in {"approved", "failed"}:
         if row.status == "failed":
             row.result = {"previous": row.result or {}}
@@ -422,6 +415,8 @@ def apply_change_request(
             f"Change request must be approved before apply; current status is {row.status}",
             ja=f"承認リクエストは適用する前に承認が必要です（現在の状態：{row.status}）。",
         )
+    # The permission may have changed since the request was made (WP36).
+    _refuse_if_denied(db, client_id, SUPPORTED_OPERATIONS[(row.resource, row.action)])
 
     current_preview = preview_change_request(
         db,
@@ -431,8 +426,6 @@ def apply_change_request(
             tool_name=row.tool_name,
             resource=row.resource,
             action=row.action,
-            risk=row.risk,
-            ai_client_id=row.ai_client_id,
             mcp_client_id=row.mcp_client_id,
             target_ref=row.target_ref,
             input_payload=row.input_payload,
@@ -458,18 +451,17 @@ def apply_change_request(
             resource=row.resource,
             action=row.action,
             risk=row.risk,
-            ai_client_id=row.ai_client_id,
             mcp_client_id=row.mcp_client_id,
             request_summary=row.input_payload,
             diff_summary=row.diff,
-            mfa_verified=row.requires_mfa,
+            # The approval this apply rests on was confirmed with the authenticator code.
+            mfa_verified=True,
         )
-        decision = evaluate_ai_operation(db, client_id, context)
         log = write_ai_audit_log(
             db,
             client_id,
             context,
-            decision,
+            "applied",
             result={"change_request_id": row.id, "status": row.status, **result},
             commit=False,
         )
@@ -504,16 +496,9 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         to_account_id = data.pop("to_account_id", None)
         if legs is None:
             legs = simple_legs(data["amount_minor"], from_account_id, to_account_id)
-        # mfa_verified stays False: nothing on the row proves a verification
-        # happened, and row.requires_mfa says the opposite - that one was
-        # demanded. A gate with no proof must stay shut, so a policy of
-        # allow_execute plus require_mfa queues rather than posts.
-        if not ledger_write_is_direct(
-            db,
-            client_id,
-            ai_client_id=row.ai_client_id,
-            risk=row.risk,
-        ):
+        # Posted directly only if the person allows the AI to record transactions;
+        # otherwise it waits in 未反映 for a second decision (ai_write_path §1.3).
+        if not ledger_write_is_direct(db, client_id):
             proposal = propose_transaction(
                 db,
                 client_id,
@@ -580,53 +565,16 @@ def _get_change_request(
 
 
 def _operation_context(
-    db: Session,
-    client_id: int,
     payload: schemas.AiChangeRequestPreviewRequest | schemas.AiChangeRequestCreate,
-    resource: str,
-    action: str,
     preview: dict[str, Any],
 ) -> AiOperationContext:
     return AiOperationContext(
         source=payload.source,
         tool_name=payload.tool_name,
-        resource=resource,
-        action=action,
-        risk=payload.risk,
-        ai_client_id=payload.ai_client_id,
+        resource=preview["resource"],
+        action=preview["action"],
+        risk=preview["risk"],
         mcp_client_id=payload.mcp_client_id,
         request_summary=preview.get("input_payload", {}),
         diff_summary=preview.get("diff", {}),
-        mfa_verified=payload.mfa_verified,
-        amount=_amount_from_payload(db, client_id, preview.get("input_payload", {}),
-                                   resource=resource, action=action, risk=payload.risk, ai_client_id=payload.ai_client_id),
-        count=_count_from_payload(preview.get("input_payload", {})),
     )
-
-
-def _amount_from_payload(
-    db: Session, client_id: int, payload: dict[str, Any], *,
-    resource: str, action: str, risk: str, ai_client_id: int | None,
-) -> int | None:
-    amount = payload.get("amount")
-    if type(amount) not in (int, float):
-        return None
-    currency = money_client_currency(db, client_id)
-    source = payload.get("currency") or currency
-    if source != currency:
-        # A policy without an amount threshold needs no foreign-currency valuation.
-        if not has_amount_threshold(db, client_id, resource=resource, action=action, risk=risk, ai_client_id=ai_client_id):
-            return None
-        as_of = date.fromisoformat(str(payload["date"])) if payload.get("date") else None
-        rate = get_exchange_rate(db, client_id, source, currency, as_of)
-        if rate is None:
-            raise Invalid(f"Cannot compare AI threshold without an exchange rate for {source}/{currency}")
-        # A policy is denominated in the client currency even for a foreign request.
-        amount = Decimal(str(amount)) * Decimal(str(rate))
-    return Money.from_major(str(amount), currency).minor
-
-
-def _count_from_payload(payload: dict[str, Any]) -> int | None:
-    if "lines" in payload and isinstance(payload["lines"], list):
-        return len(payload["lines"])
-    return 1

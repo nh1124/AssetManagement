@@ -21,7 +21,7 @@ from backend.app.database import Base
 from backend.app.domain.errors import Invalid
 from backend.app.routers import data_transfer, transactions as transaction_router
 from backend.app.services import ledger_service, report_service
-from backend.app.services.ai_policy_service import replace_client_policies
+from backend.app.services.ai_policy_service import set_operation_mode
 from backend.app.workflows import ai_change_request_workflow
 from backend.app.workflows.ai_change_request_workflow import (
     apply_change_request,
@@ -100,7 +100,6 @@ def _approved_transaction_change_request(db, client: models.Client) -> models.Ai
         schemas.AiChangeRequestCreate(
             resource="transactions",
             action="create",
-            risk="medium",
             idempotency_key="atomic-ai-transaction",
             input_payload={
                 "date": "2026-07-01",
@@ -112,7 +111,10 @@ def _approved_transaction_change_request(db, client: models.Client) -> models.Ai
             },
         ),
     )
-    return approve_change_request(db, client.id, client.id, request.id)
+    # Every approval is confirmed with the authenticator code (WP36).
+    db.add(models.ClientMfaSetting(client_id=client.id, enabled=True))
+    db.commit()
+    return approve_change_request(db, client.id, client.id, request.id, {"type": "step_up", "sub": str(client.id)})
 
 
 def _open_ledger_gate(db, client: models.Client) -> None:
@@ -123,12 +125,7 @@ def _open_ledger_gate(db, client: models.Client) -> None:
     where there is no posting to test; the queued path is covered in
     test_ai_write_path.py. See docs/specs/ai_write_path.md.
     """
-    replace_client_policies(db, client.id, [{
-        "resource": "transactions",
-        "action": "create",
-        "risk": "medium",
-        "mode": "allow_execute",
-    }])
+    set_operation_mode(db, client.id, "transactions.create", "allow", None)
 
 
 def test_ai_apply_rolls_back_transaction_when_journal_posting_fails(monkeypatch) -> None:

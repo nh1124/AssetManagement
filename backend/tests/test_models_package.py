@@ -13,7 +13,8 @@ from app.database import Base
 # §8-11: scenario_assumption_periods (期間ごとの前提). WP27: monthly_actions gone, registry_entries.records_transactions. WP33: period_closes gone.
 # WP34: ai_audit_logs.authorization / http_status / request_id / correlation_id.
 # WP35: mcp_oauth_clients and mcp_connections (the MCP server's OAuth state).
-EXPECTED_METADATA_SHA256 = "4a76dc9d025b621ad9d0eb62ac7acb2bb0fad1bab5b21457bb410efff704a770"
+# WP36: ai_operation_policies per operation; no AI-client ids, thresholds or per-request MFA.
+EXPECTED_METADATA_SHA256 = "b6a8134d07a6c9059587bf0e04527e16780ba388ab4f57bc10c3198ed2cd3b55"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode", "McpOAuthClient", "McpConnection",
@@ -95,7 +96,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 40
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 465
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 456
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

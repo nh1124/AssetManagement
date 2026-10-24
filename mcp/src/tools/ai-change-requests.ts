@@ -7,7 +7,6 @@ import { z } from "zod";
 import { api } from "../api-client.js";
 import { toStructured } from "../utils.js";
 
-const riskSchema = z.enum(["low", "medium", "high", "critical"]);
 const statusSchema = z.enum(["draft", "pending", "approved", "applied", "rejected", "expired", "failed"]);
 const jsonObjectSchema = z.record(z.unknown());
 
@@ -15,7 +14,6 @@ const changeRequestPayloadSchema = z
   .object({
     resource: z.string().min(1).describe("Resource name, for example transactions or monthly_plan_lines"),
     action: z.string().min(1).describe("Action name, for example create or update"),
-    risk: riskSchema.optional().default("medium").describe("Operation risk"),
     target_ref: jsonObjectSchema.optional().default({}).describe("Target reference, for example { id: 123 }"),
     input_payload: jsonObjectSchema.optional().default({}).describe("Payload to apply after approval"),
     idempotency_key: z.string().optional().describe("Optional stable key to avoid duplicate requests"),

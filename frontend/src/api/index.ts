@@ -14,8 +14,9 @@ import type {
     AiAuditLog,
     AiExecutionSettings,
     McpConnections,
-    AiOperationPolicy,
-    AiOperationPolicyPayload,
+    AiOperationEntry,
+    AiOperationMode,
+    AiOperations,
     AnalysisSummary,
     CapsuleDrawdown,
     CapsuleDrawdownInput,
@@ -149,13 +150,14 @@ export const reauth = async (payload: { code?: string; recovery_code?: string })
     return response.data;
 };
 
-export const getAiPolicies = async (): Promise<AiOperationPolicy[]> => {
-    const response = await api.get('/ai/policies');
+export const getAiOperations = async (): Promise<AiOperations> => {
+    const response = await api.get('/ai/operations');
     return response.data;
 };
 
-export const updateAiPolicies = async (policies: AiOperationPolicyPayload[]): Promise<AiOperationPolicy[]> => {
-    const response = await api.put('/ai/policies', policies);
+/** expected_mode: the mode the screen showed; a change made elsewhere since is a 409 (changed_elsewhere). */
+export const updateAiOperation = async (key: string, payload: { mode: AiOperationMode; expected_mode: AiOperationMode }): Promise<AiOperationEntry> => {
+    const response = await api.put(`/ai/operations/${encodeURIComponent(key)}`, payload);
     return response.data;
 };
 

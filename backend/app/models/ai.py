@@ -3,49 +3,26 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, DateTime, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 
-from sqlalchemy.ext.hybrid import hybrid_property
-
-from ..domain.money import Money
-from .money import MinorUnits, major_expression, client_currency, client_currency_expression
 from ..database import Base
 
 class AiOperationPolicy(Base):
+    """The person's permission for one AI operation (domain/ai_operations): allow, approval or deny.
+
+    Saved only once the person sets it; an operation without a row has its default (WP36).
+    """
     __tablename__ = "ai_operation_policies"
     __table_args__ = (
-        UniqueConstraint(
-            "client_id",
-            "ai_client_id",
-            "resource",
-            "action",
-            "risk",
-            name="_client_ai_policy_uc",
-        ),
+        UniqueConstraint("client_id", "operation", name="_client_ai_operation_uc"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
-    ai_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
-    resource = Column(String, nullable=False)
-    action = Column(String, nullable=False)
-    risk = Column(String, nullable=False)
+    operation = Column(String, nullable=False)
     mode = Column(String, nullable=False)
-    threshold_amount_minor = Column(MinorUnits, nullable=True)
-    threshold_count = Column(Integer, nullable=True)
-    require_mfa = Column(Boolean, default=False, server_default="false", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     client = relationship("Client", back_populates="ai_operation_policies", foreign_keys=[client_id])
-
-    @hybrid_property
-    def threshold_amount(self) -> float | None:
-        if self.threshold_amount_minor is None:
-            return None
-        return Money(self.threshold_amount_minor, client_currency(self)).to_float()
-
-    @threshold_amount.expression
-    def threshold_amount(cls):
-        return major_expression(cls.threshold_amount_minor, client_currency_expression(cls))
 
 
 class AiAuditLog(Base):
@@ -54,7 +31,6 @@ class AiAuditLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     actor_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
-    ai_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
     mcp_client_id = Column(String, nullable=True, index=True)
     source = Column(String, nullable=False)
     tool_name = Column(String, nullable=True)
@@ -91,7 +67,6 @@ class AiChangeRequest(Base):
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     created_by_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
-    ai_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
     mcp_client_id = Column(String, nullable=True, index=True)
     source = Column(String, nullable=False)
     tool_name = Column(String, nullable=True)
@@ -107,7 +82,6 @@ class AiChangeRequest(Base):
     validation = Column(JSON, default=dict, nullable=False)
     idempotency_key = Column(String, nullable=False)
     precondition_hash = Column(String, nullable=True)
-    requires_mfa = Column(Boolean, default=False, server_default="false", nullable=False)
     approved_by_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
     approved_at = Column(DateTime, nullable=True)
     applied_at = Column(DateTime, nullable=True)

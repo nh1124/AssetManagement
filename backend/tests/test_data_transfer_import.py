@@ -144,7 +144,7 @@ def _seed(db, client_id=101, base=10000):
         trigger_transaction_id=tx.id, posted_transaction_id=tx.id, idempotency_key="proposal")
     add(models.ClientMfaSetting, 25, enabled=False, totp_secret_encrypted="test-secret")
     add(models.ClientRecoveryCode, 26, code_hash="test-hash")
-    add(models.AiOperationPolicy, 27, resource="data_transfer", action="import", risk="critical", mode="ask")
+    add(models.AiOperationPolicy, 27, operation="data.import", mode="deny")
     add(models.AiAuditLog, 28, source="test", resource="data_transfer", action="import",
         risk="critical", decision="allowed", request_summary={"marker": "audit"})
     add(models.AiChangeRequest, 29, source="test", resource="transactions", action="create",

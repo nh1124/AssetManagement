@@ -13,39 +13,10 @@ from scenario_fixtures import goal_scenario_id
 
 from app import models, schemas
 from app.database import Base
-from app.domain.errors import Refused
 from app.domain.money import Money
 from app.models.money import MinorUnits
 from app.services.capsule_service import _resolve_rule_amount
 from app.services.money_storage import rule_amount_fields
-from app.services.ai_policy_service import replace_client_policies
-from app.workflows.ai_change_request_workflow import preview_change_request
-
-
-@pytest.mark.parametrize("currency", ["JPY", "USD"])
-def test_threshold_through_request_context(currency):
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    with Session(engine) as db:
-        db.add(models.Client(id=1, name="threshold", general_settings={"currency": currency}))
-        db.commit()
-        policy = replace_client_policies(db, 1, [{
-            "resource": "transactions", "action": "create", "risk": "medium",
-            "mode": "deny", "threshold_amount": 10000,
-        }])[0]
-        assert policy.threshold_amount_minor == Money.from_major("10000", currency).minor
-
-        def request(amount):
-            return schemas.AiChangeRequestPreviewRequest(
-                resource="transactions", action="create", risk="medium",
-                input_payload={"date": "2026-10-12", "amount": amount,
-                               "description": "threshold probe", "currency": currency},
-            )
-
-        assert preview_change_request(db, 1, request(9999))["validation"]["valid"]
-        with pytest.raises(Refused, match=f"Matched policy {policy.id}"):
-            preview_change_request(db, 1, request(10001))
-        print(f"Threshold {currency}: 10000 major; request 9999 does not fire, 10001 fires")
 
 
 MONEY_FIELDS = [
@@ -53,7 +24,6 @@ MONEY_FIELDS = [
     (models.Capsule, "target_amount"),
     (models.Capsule, "monthly_contribution"),
     (models.Product, "last_unit_price"), (models.Product, "purchase_price"),
-    (models.AiOperationPolicy, "threshold_amount"),
     (models.RegistryEntry, "amount"),
 ]
 
@@ -277,8 +247,6 @@ def _money_rows(db):
                        monthly_contribution_minor=1234),
         models.MonthlyPlanLine(id=1, client_id=1, target_period="2026-10", line_type="expense", amount_minor=1234),
         models.Product(id=1, client_id=1, last_unit_price_minor=1234, purchase_price_minor=1234),
-        models.AiOperationPolicy(id=1, client_id=1, resource="transactions", action="create",
-                                 risk="medium", mode="deny", threshold_amount_minor=1234),
         models.RegistryEntry(id=1, client_id=1, name='read', currency='JPY', amount_minor=1234, start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly"),
         models.CapsuleRule(id=1, client_id=1, capsule_id=1, trigger_type="Expense", amount_type="fixed", amount_minor=1234),
         models.CapsuleRule(id=2, client_id=1, capsule_id=1, trigger_type="Expense", amount_type="percentage", percentage_bp=250),
@@ -339,34 +307,6 @@ def test_downgrade_refuses_lossy_float():
     with pytest.raises(ValueError, match="Lossy downgrade"):
         _run_migration(engine, "downgrade")
     assert _snapshot(engine) == before
-
-
-def test_foreign_threshold_context_values_in_client_currency_and_requires_rate():
-    from app.domain.errors import Invalid
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    with Session(engine) as db:
-        db.add(models.Client(id=1, name="JPY threshold", general_settings={"currency": "JPY"}))
-        db.commit()
-        replace_client_policies(db, 1, [{
-            "resource": "transactions", "action": "create", "risk": "medium",
-            "mode": "deny", "threshold_amount": 10000,
-        }])
-
-        def request(amount):
-            return schemas.AiChangeRequestPreviewRequest(
-                resource="transactions", action="create", risk="medium",
-                input_payload={"date": "2026-10-12", "amount": amount, "currency": "USD"},
-            )
-
-        with pytest.raises(Invalid, match="without an exchange rate"):
-            preview_change_request(db, 1, request(66.68))
-        db.add(models.ExchangeRate(client_id=1, base_currency="USD", quote_currency="JPY",
-                                   rate=150, as_of_date=date(2026, 10, 12)))
-        db.commit()
-        assert preview_change_request(db, 1, request(66.66))["validation"]["valid"]
-        with pytest.raises(Refused, match="Matched policy"):
-            preview_change_request(db, 1, request(66.68))
 
 
 @pytest.mark.parametrize("value", [1.25, True, "250", 2 ** 31])

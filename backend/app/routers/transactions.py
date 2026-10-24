@@ -8,8 +8,7 @@ from sqlalchemy.orm import Session
 from ..domain.messages import Message, message_of
 from .. import models, schemas
 from ..database import get_db
-from ..dependencies import get_current_client, mcp_client_id
-from ..services.ai_policy_service import assert_direct_ledger_write_allowed
+from ..dependencies import get_current_client
 from ..services.ledger_service import list_proposals as list_proposals_service
 from ..services.cache_service import invalidate_client
 from ..services.journal_legs import primary_accounts
@@ -118,12 +117,6 @@ def create_transaction(
     request: Request = None,
 ):
     """Create a transaction for a specific client and process double-entry bookkeeping."""
-    assert_direct_ledger_write_allowed(
-        db,
-        current_client.id,
-        mcp_client_id=mcp_client_id(),
-        risk="medium",
-    )
     db_transaction = record_entry(db, current_client.id, transaction)
     invalidate_client(current_client.id)
 
@@ -219,12 +212,6 @@ def update_transaction(
     request: Request = None,
 ):
     """Update a transaction and atomically rebuild its journal entries."""
-    assert_direct_ledger_write_allowed(
-        db,
-        current_client.id,
-        mcp_client_id=mcp_client_id(),
-        risk="medium",
-    )
     try:
         tx = amend_entry(db, current_client.id, transaction_id, payload)
     except ValueError as exc:
@@ -246,12 +233,6 @@ def delete_transaction(
     request: Request = None,
 ):
     """Delete a transaction and its journal entries for a specific client."""
-    assert_direct_ledger_write_allowed(
-        db,
-        current_client.id,
-        mcp_client_id=mcp_client_id(),
-        risk="medium",
-    )
     if not remove_entry(db, current_client.id, transaction_id):
         raise HTTPException(status_code=404, detail=Message("Transaction not found", ja="取引が見つかりません。"))
     invalidate_client(current_client.id)

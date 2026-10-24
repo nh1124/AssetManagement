@@ -22,7 +22,7 @@ from backend.app.main import app
 from backend.app.maintenance import restore_ai_audit
 from backend.app.routers import auth
 from backend.app.services import ai_policy_service
-from backend.app.services.ai_policy_service import describe_mcp_request, replace_client_policies
+from backend.app.services.ai_policy_service import describe_mcp_request, set_operation_mode
 from backend.app.utils.jwt import create_access_token, create_typed_token, decode_token
 from backend.app.utils.observability import install_db_audit
 from test_journal_legs_api import _client
@@ -88,12 +88,9 @@ def _rows(db) -> list[models.AiAuditLog]:
     return db.query(models.AiAuditLog).order_by(models.AiAuditLog.id).all()
 
 
-def _open_ledger_gate(db, client) -> int:
-    policies = replace_client_policies(db, client.id, [{
-        "resource": "transactions", "action": "create", "risk": "medium",
-        "mode": "allow_execute", "require_mfa": False,
-    }])
-    return policies[0].id
+def _open_ledger_gate(db, client) -> None:
+    for key in ("transactions.create", "transactions.update"):
+        set_operation_mode(db, client.id, key, "allow", None)
 
 
 # ─── the token decides the channel ──────────────────────────────────────────
@@ -126,7 +123,8 @@ def test_an_mcp_token_without_the_header_is_still_gated_and_audited(gateway):
     [row] = _rows(db)
     assert (row.authorization, row.decision, row.http_status) == ("refused_policy", "denied", 403)
     assert row.mcp_client_id == MCP_CLIENT and row.source == "mcp_http"
-    assert "Direct MCP ledger write refused" in json.dumps(row.result_summary)
+    assert row.result_summary["authorization"]["refusal"] == "operation_needs_approval"
+    assert row.result_summary["authorization"]["operation"] == {"key": "transactions.create", "mode": "approval"}
 
 
 def test_a_persons_requests_are_not_ai_operations(gateway):
@@ -138,17 +136,14 @@ def test_a_persons_requests_are_not_ai_operations(gateway):
 
 # ─── every operation gets one row, with what let it through ─────────────────
 
-def test_a_direct_ledger_write_names_the_rule_that_allowed_it(gateway):
+def test_a_direct_ledger_write_names_the_permission_that_allowed_it(gateway):
     http, db, client, lunch = gateway
-    policy_id = _open_ledger_gate(db, client)
+    _open_ledger_gate(db, client)
     response = http.post("/transactions/", json=lunch, headers={**_mcp_bearer(client), **TOOL, "X-Request-ID": "mcp-call-0001"})
     assert response.status_code == 200
     [row] = _rows(db)
     assert (row.resource, row.action, row.decision, row.authorization) == ("transactions", "create", "applied", "direct_policy")
-    assert row.result_summary["authorization"]["policy"] == {
-        "id": policy_id, "resource": "transactions", "action": "create", "risk": "medium",
-        "mode": "allow_execute", "require_mfa": False,
-    }
+    assert row.result_summary["authorization"]["operation"] == {"key": "transactions.create", "mode": "allow"}
     assert row.result_summary["authorization"]["mcp_write_mode"] == "direct_write"
     assert row.tool_name == "transactions_create"
     assert row.correlation_id == "mcp-call-0001" and row.request_id and row.http_status == 200
@@ -160,14 +155,32 @@ def test_a_direct_ledger_write_names_the_rule_that_allowed_it(gateway):
     assert created["op"] == "insert" and created["values"]["description"] == "Lunch"
 
 
-def test_a_write_off_the_ledger_is_allowed_by_the_write_mode(gateway):
+def test_a_write_off_the_ledger_is_allowed_by_its_default_permission(gateway):
     http, db, client, _ = gateway
     response = http.post("/accounts/", json={"name": "Wallet", "account_type": "asset"}, headers=_mcp_bearer(client))
     assert response.status_code == 200
     [row] = _rows(db)
-    assert (row.resource, row.action, row.authorization, row.decision) == ("accounts", "create", "direct_mode", "applied")
-    assert "policy" not in row.result_summary["authorization"]
+    assert (row.resource, row.action, row.authorization, row.decision) == ("accounts", "create", "direct_policy", "applied")
+    assert row.result_summary["authorization"]["operation"] == {"key": "accounts.create", "mode": "allow"}
     assert row.diff_summary["tables"] == {"accounts": 1}
+
+
+def test_a_denied_operation_is_refused_by_its_permission(gateway):
+    http, db, client, _ = gateway
+    set_operation_mode(db, client.id, "accounts.create", "deny", None)
+    response = http.post("/accounts/", json={"name": "Wallet", "account_type": "asset"}, headers=_mcp_bearer(client))
+    assert (response.status_code, response.json()["detail"]["reason"]) == (403, "operation_denied")
+    [row] = _rows(db)
+    assert (row.authorization, row.decision) == ("refused_policy", "denied")
+    assert db.query(models.Account).filter_by(name="Wallet").count() == 0
+
+
+def test_a_request_outside_the_operation_list_is_refused(gateway):
+    http, db, client, _ = gateway
+    response = http.get("/ai/operations", headers=_mcp_bearer(client))
+    assert (response.status_code, response.json()["detail"]["reason"]) == (403, "operation_unknown")
+    [row] = _rows(db)
+    assert (row.authorization, row.decision) == ("refused_scope", "denied")
 
 
 def test_reads_are_audited(gateway):
@@ -175,32 +188,34 @@ def test_reads_are_audited(gateway):
     assert http.get("/accounts/", headers=_mcp_bearer(client)).status_code == 200
     [row] = _rows(db)
     assert (row.resource, row.action, row.risk, row.authorization, row.decision) == ("accounts", "read", "low", "read", "allowed")
+    set_operation_mode(db, client.id, "accounts.read", "deny", None)
+    assert http.get("/accounts/", headers=_mcp_bearer(client)).status_code == 403
     assert row.diff_summary == {}
 
 
-def test_the_write_mode_check_of_the_mcp_server_is_not_an_operation(gateway):
+def test_the_mcp_server_does_not_read_the_write_mode_any_more(gateway):
+    # WP36: the backend refuses and records; reading the settings is not an operation the AI has.
     http, db, client, _ = gateway
-    assert http.get("/ai/execution-settings", headers=_mcp_bearer(client)).status_code == 200
-    assert _rows(db) == []
+    response = http.get("/ai/execution-settings", headers=_mcp_bearer(client))
+    assert response.status_code == 403 and response.json()["detail"]["reason"] == "operation_unknown"
+    (row,) = _rows(db)
+    assert (row.authorization, row.decision, row.http_status) == ("refused_scope", "denied", 403)
 
 
 def test_an_endpoint_that_audits_itself_gets_its_row_completed_not_doubled(gateway):
     http, db, client, _ = gateway
-    response = http.post(
-        "/ai/evaluate", json={"resource": "transactions", "action": "create", "risk": "medium"},
-        headers={**_mcp_bearer(client), "X-Request-ID": "mcp-call-0002"},
-    )
+    response = http.get("/ai/context/resources", headers={**_mcp_bearer(client), "X-Request-ID": "mcp-call-0002"})
     assert response.status_code == 200
     [row] = _rows(db)
-    assert row.resource == "transactions"  # the endpoint's own description is kept
+    assert (row.resource, row.action) == ("ai_context", "read")  # the endpoint's own description is kept
     assert (row.authorization, row.http_status, row.correlation_id) == ("read", 200, "mcp-call-0002")
-    assert row.request_summary["http"]["path"] == "/ai/evaluate"
+    assert row.request_summary["http"]["path"] == "/ai/context/resources"
 
 
 # ─── what the AI may never do ───────────────────────────────────────────────
 
 @pytest.mark.parametrize("method, path, body, reason", [
-    ("put", "/ai/policies", [{"resource": "transactions", "action": "create", "risk": "medium", "mode": "allow_execute"}], "ai_permissions"),
+    ("put", "/ai/operations/transactions.create", {"mode": "allow"}, "ai_permissions"),
     ("put", "/ai/execution-settings", {"mcp_write_mode": "direct_write"}, "ai_permissions"),
     ("post", "/ai/change-requests/1/approve", {}, "human_approval"),
     ("post", "/ai/change-requests/1/reject", {}, "human_approval"),
@@ -226,8 +241,7 @@ def test_the_ai_cannot_raise_its_own_permissions_act_on_the_account_or_approve(g
 
 def test_a_person_still_changes_ai_permissions(gateway):
     http, db, client, _ = gateway
-    rules = [{"resource": "transactions", "action": "create", "risk": "medium", "mode": "allow_execute"}]
-    assert http.put("/ai/policies", json=rules, headers=_ui_bearer(client)).status_code == 200
+    assert http.put("/ai/operations/transactions.create", json={"mode": "allow"}, headers=_ui_bearer(client)).status_code == 200
     assert db.query(models.AiOperationPolicy).count() == 1
 
 
@@ -241,7 +255,7 @@ def test_the_ai_cannot_set_its_write_mode_through_the_general_settings(gateway):
                        json={"general_settings": {"language": "en"}})
     assert allowed.status_code == 200
     first, second = _rows(db)
-    assert (first.authorization, second.authorization) == ("refused_scope", "direct_mode")
+    assert (first.authorization, second.authorization) == ("refused_scope", "direct_policy")
     db.expire_all()
     assert "ai_operation" not in (db.get(models.Client, client.id).general_settings or {})
 

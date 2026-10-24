@@ -349,8 +349,9 @@ def test_step_up_refuses_password_and_requires_mfa_setup(db):
     with pytest.raises(HTTPException) as no_mfa:
         auth.reauth(auth.MfaFactorRequest(current_password="password123"), db, client)
     assert no_mfa.value.status_code == 403
-    row = models.AiChangeRequest(client_id=1, source="mcp", resource="data_transfer", action="import",
-                                 risk="critical", idempotency_key="wp31-mfa", requires_mfa=True)
+    # Every approval asks for the authenticator code (WP36), whatever the request's risk.
+    row = models.AiChangeRequest(client_id=1, source="mcp", resource="monthly_plan_lines", action="update",
+                                 risk="medium", idempotency_key="wp31-mfa")
     db.add(row)
     db.commit()
     token = decode_token(auth._issue_step_up_token(client)["step_up_token"])
