@@ -20,12 +20,10 @@ export function operationEffect(operation: EffectFacts, mode: AiOperationMode, w
     return requests ? 'through_approval' : 'no_requests';
 }
 
-export type KindFilter = 'all' | 'read' | 'write';
-
-/** A search matches the operation's name in either language, its key or one of its tools. */
-export function operationMatches(operation: Pick<AiOperationEntry, 'kind' | 'key' | 'ja' | 'en' | 'tools'>, query: string, kind: KindFilter) {
-    if (kind !== 'all' && operation.kind !== kind) return false;
-    const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const text = [operation.ja, operation.en, operation.key, ...operation.tools].join('\n').toLowerCase();
-    return words.every((word) => text.includes(word));
+/** A row shows a tag only where the chosen permission is not what happens (WP37):
+ * "allow" that goes through approval, or a permission the write mode makes unusable. */
+export function effectTag(operation: EffectFacts, mode: AiOperationMode, writeMode: AiMcpWriteMode, requests: boolean): 'via_approval' | 'unavailable' | null {
+    const effect = operationEffect(operation, mode, writeMode, requests);
+    if (effect === 'not_in_mode' || effect === 'no_requests') return 'unavailable';
+    return effect === 'through_approval' && mode === 'allow' ? 'via_approval' : null;
 }
