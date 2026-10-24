@@ -14,6 +14,12 @@ import {
   createAuthCode,
   exchangeCodeForTokens,
   refreshAccessToken,
+  isRegisteredRedirectUri,
+  acceptedResources,
+  ownResources,
+  isResourceIn,
+  tokenAudienceAccepted,
+  EXTRA_ACCEPTED_RESOURCES,
 } from "./auth.js";
 import { withMcpRequestContext, type McpRequestContext } from "./api-client.js";
 
@@ -235,14 +241,16 @@ function renderLoginForm(params: {
 app.get("/authorize", async (req, res) => {
   const q = req.query as Record<string, string>;
   const { response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, scope } = q;
-  const resource = q.resource || buildCanonicalMcpResource(req);
+  const canonicalResource = buildCanonicalMcpResource(req);
+  const resource = q.resource || canonicalResource;
 
   if (response_type !== "code") { res.status(400).json({ error: "unsupported_response_type" }); return; }
   if (!client_id || !redirect_uri || !code_challenge) { res.status(400).json({ error: "invalid_request" }); return; }
 
   const client = await resolveClient(client_id);
   if (!client) { res.status(400).json({ error: "invalid_client" }); return; }
-  if (!client.redirect_uris.includes(redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
+  if (!isRegisteredRedirectUri(client.redirect_uris, redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
+  if (!isResourceIn(resource, ownResources(canonicalResource))) { res.status(400).json({ error: "invalid_target" }); return; }
 
   console.info("[oauth] authorize GET", { client_id, resource });
 
@@ -262,14 +270,16 @@ app.get("/authorize", async (req, res) => {
 app.post("/authorize", async (req, res) => {
   const b = req.body as Record<string, string>;
   const { response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, scope, username, password, code: factorCode } = b;
-  const resource = b.resource || buildCanonicalMcpResource(req);
+  const canonicalResource = buildCanonicalMcpResource(req);
+  const resource = b.resource || canonicalResource;
 
   if (response_type !== "code") { res.status(400).json({ error: "unsupported_response_type" }); return; }
   if (!client_id || !redirect_uri || !code_challenge) { res.status(400).json({ error: "invalid_request" }); return; }
 
   const client = await resolveClient(client_id);
   if (!client) { res.status(400).json({ error: "invalid_client" }); return; }
-  if (!client.redirect_uris.includes(redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
+  if (!isRegisteredRedirectUri(client.redirect_uris, redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
+  if (!isResourceIn(resource, ownResources(canonicalResource))) { res.status(400).json({ error: "invalid_target" }); return; }
 
   const credentials = await validateUserCredentials(username ?? "", password ?? "", factorCode ?? "");
   if (!credentials.user) {
@@ -385,6 +395,13 @@ function requireBearer(req: Request, res: Response, next: NextFunction): void {
   if (!payload) {
     console.warn("[mcp] invalid Bearer token", { method: req.method, path: req.path, token_prefix: auth.slice(7, 20) });
     res.setHeader("WWW-Authenticate", `Bearer realm="${issuer}", error="invalid_token"`).status(401).json({ error: "invalid_token" });
+    return;
+  }
+  // A genuine token issued for another MCP server is refused unless that server is listed.
+  if (!tokenAudienceAccepted(payload.aud, acceptedResources(buildCanonicalMcpResource(req)))) {
+    console.warn("[mcp] Bearer token for another resource", { method: req.method, path: req.path, aud: payload.aud });
+    res.setHeader("WWW-Authenticate", `Bearer realm="${issuer}", error="invalid_token", error_description="token not issued for this MCP server"`)
+      .status(401).json({ error: "invalid_token" });
     return;
   }
   (req as Request & { mcpAuth?: McpRequestContext }).mcpAuth = {
@@ -519,5 +536,6 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`   Port        : ${PORT}`);
   console.log(`   Base URL    : ${base}`);
   console.log(`   MCP endpoint: ${base}/mcp`);
-  console.log(`   OAuth disco : ${base}/.well-known/oauth-authorization-server\n`);
+  console.log(`   OAuth disco : ${base}/.well-known/oauth-authorization-server`);
+  console.log(`   Also accepts: ${EXTRA_ACCEPTED_RESOURCES.length ? EXTRA_ACCEPTED_RESOURCES.join(", ") : "(none: tokens for this server only)"}\n`);
 });

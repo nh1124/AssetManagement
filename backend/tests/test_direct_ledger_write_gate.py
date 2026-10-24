@@ -149,6 +149,25 @@ def test_mcp_create_refused_then_posts_same_payload_when_policy_opens(http_ledge
     print(f"Policy transactions/create/medium=allow_execute: {allowed.status_code} {allowed.json()}")
 
 
+def test_rule_added_on_the_permission_screen_opens_the_gate(http_ledger):
+    # What 自動化 › AI sends when the owner adds transactions / create / 中 as 実行を許可
+    # with no rules saved yet (frontend policyRules.newPolicyPayload).
+    http, db, payload = http_ledger
+    assert http.get("/ai/policies").json() == []
+    _assert_refused(http.post("/transactions/", json=payload, headers=MCP_HEADERS), "medium")
+
+    saved = http.put("/ai/policies", json=[{
+        "ai_client_id": None, "resource": "transactions", "action": "create", "risk": "medium",
+        "mode": "allow_execute", "threshold_amount": None, "threshold_count": None, "require_mfa": False,
+    }])
+
+    assert saved.status_code == 200, saved.text
+    assert [(row["resource"], row["action"], row["risk"], row["mode"]) for row in saved.json()] == [
+        ("transactions", "create", "medium", "allow_execute"),
+    ]
+    _assert_posted(db, http.post("/transactions/", json=payload, headers=MCP_HEADERS), payload)
+
+
 @pytest.mark.parametrize("policy", [
     {"mode": "deny"},
     {"mode": "allow_read"},

@@ -76,6 +76,8 @@ BACKEND_PASSWORD=your-password
 
 For production, set `MCP_APP_ENV=production` and replace `MCP_JWT_SECRET` with a strong unique value shared with the backend `MCP_JWT_SECRET`. Set backend `MCP_ALLOWED_ISSUERS` to the public MCP issuer URL, usually `MCP_BASE_URL`, and keep `MCP_TOKEN_AUDIENCE` aligned with `BACKEND_TOKEN_AUDIENCE`. The HTTP server refuses known development defaults in production mode.
 
+The server issues access tokens only for its own resource (`MCP_BASE_URL` with or without `/mcp`; `/authorize` answers `invalid_target` for any other `resource`) and accepts only tokens whose audience is that resource. To let another MCP server that shares `MCP_JWT_SECRET` pass its tokens, list its resource in `MCP_ACCEPTED_RESOURCES` (comma-separated URLs); remove it and run `docker compose up -d mcp` to close it again. The restart also drops registered clients and refresh tokens, so every client signs in again.
+
 The Docker Compose `BACKEND_USERNAME` and `BACKEND_PASSWORD` values are still available for stdio or development fallback usage. They are not used for normal streamable HTTP tool calls after OAuth authorization.
 
 Then run:
