@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import crypto from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
+import jwt from "jsonwebtoken";
+import { startFakeBackend } from "./fake-backend.mts";
 
 const secret = "audience-test-secret-at-least-32-characters";
 process.env.APP_ENV = "development";
@@ -9,8 +10,7 @@ process.env.JWT_SECRET = secret;
 process.env.MCP_ACCEPTED_RESOURCES = " https://mcp-b.example/mcp/ , ";
 
 const {
-  EXTRA_ACCEPTED_RESOURCES, acceptedResources, createAuthCode, exchangeCodeForTokens, isResourceIn,
-  normalizeResource, ownResources, tokenAudienceAccepted,
+  EXTRA_ACCEPTED_RESOURCES, acceptedResources, isResourceIn, normalizeResource, ownResources, tokenAudienceAccepted,
 } = await import("../src/auth.js");
 
 // ─── Matching rules ───────────────────────────────────────
@@ -56,10 +56,12 @@ assert.equal(isResourceIn("https://mcp-b.example/mcp", own), false);
 
 const mcpDir = new URL("..", import.meta.url);
 
+const backend = await startFakeBackend();
+
 function startServer(env: Record<string, string>) {
   const child = spawn(process.execPath, ["--import", "tsx", "src/server-http.ts"], {
     cwd: mcpDir,
-    env: { ...process.env, BACKEND_URL: "http://127.0.0.1:9", ...env },
+    env: { ...process.env, BACKEND_URL: backend.url, ...env },
     stdio: ["ignore", "ignore", "pipe"],
   });
   let stderr = "";
@@ -80,18 +82,16 @@ const base = `http://127.0.0.1:${port}`;
 const self = `http://localhost:${port}`;
 const server = startServer({ PORT: port, BASE_URL: self, MCP_ACCEPTED_RESOURCES: "https://mcp-b.example/mcp" });
 
+// A token as the backend signs one at /auth/mcp/token (WP35): for the resource
+// fixed at /authorize, and for the backend's exchange.
 function tokenFor(resource: string): string {
-  const verifier = crypto.randomBytes(32).toString("base64url");
-  const code = createAuthCode({
-    client_id: "audience-client", redirect_uri: "http://localhost/callback",
-    code_challenge: crypto.createHash("sha256").update(verifier).digest("base64url"),
-    code_challenge_method: "S256", resource, allow_refresh_token: false,
-    username: "tester", backend_client_id: 1, issuer: self, auth_time_ms: Date.now(),
+  return jwt.sign({
+    sub: "tester", type: "access", client_id: "audience-client", scope: "mcp", username: "tester",
+    backend_client_id: 1, auth_time_ms: Date.now(), cid: 1,
+  }, secret, {
+    expiresIn: 3600, issuer: self,
+    audience: resource ? [resource, "asset-management-backend"] : ["asset-management-backend"],
   });
-  const tokens = exchangeCodeForTokens({ code, client_id: "audience-client", redirect_uri: "http://localhost/callback",
-    code_verifier: verifier, resource, canonical_resource: resource });
-  assert(tokens);
-  return tokens.access_token;
 }
 
 try {
@@ -145,6 +145,7 @@ try {
   }
 } finally {
   server.child.kill();
+  await backend.close();
 }
 
 console.log("Token audience: only this server's resource and the listed ones are accepted, /authorize issues only for this server");

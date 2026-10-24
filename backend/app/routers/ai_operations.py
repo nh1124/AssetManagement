@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from urllib.parse import urlsplit
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..config import settings
 from ..database import get_db
-from ..dependencies import get_current_client, mcp_client_id as request_mcp_client_id
+from ..dependencies import get_current_client, mcp_client_id as request_mcp_client_id, request_language
 from ..domain.errors import NotFound, Refused, detail_for, status_for
+from ..services import mcp_connection_service
+from ..utils.jwt import token_is_current
 from ..services.ai_context_service import (
     get_context_resource,
     get_context_summary,
@@ -76,6 +81,62 @@ def put_ai_execution_settings(
 ):
     merge_ai_execution_settings(db, current_client, {"mcp_write_mode": payload.mcp_write_mode})
     return _execution_settings_payload(current_client)
+
+
+def _mcp_url() -> str:
+    base = (settings.mcp_base_url or "").strip().rstrip("/") or next(iter(settings.allowed_mcp_token_issuers), "")
+    return f"{base}/mcp" if base else ""
+
+
+def _host(url: str) -> str | None:
+    try:
+        return urlsplit(url).hostname
+    except ValueError:
+        return None
+
+
+def _connection_payload(row: models.McpConnection, current_client: models.Client) -> dict:
+    current = token_is_current({"auth_time_ms": row.auth_time_ms}, current_client.tokens_valid_after,
+                               claim="auth_time_ms", required=True)
+    return {
+        "id": row.id,
+        "client_name": row.client_name,
+        "oauth_client_id": row.oauth_client_id,
+        "client_source": row.client_source,
+        "client_host": _host(row.oauth_client_id) if row.client_source == "cimd" else None,
+        "redirect_host": _host(row.redirect_uri),
+        "scope": row.scope,
+        "connected_at": row.activated_at,
+        "last_used_at": row.last_used_at,
+        "expires_at": row.expires_at,
+        "refreshable": row.allow_refresh,
+        "status": "active" if current else "reconnect_required",
+    }
+
+
+@router.get("/mcp/connections", response_model=schemas.McpConnections)
+def get_mcp_connections(
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """The AI apps this person connected over MCP, and the address to connect another (WP35)."""
+    rows = mcp_connection_service.list_connections(db, current_client.id)
+    return {"mcp_url": _mcp_url(), "connections": [_connection_payload(row, current_client) for row in rows]}
+
+
+@router.delete("/mcp/connections/{connection_id}", status_code=204)
+def delete_mcp_connection(
+    connection_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """End one connection: the app's next tool call is refused and its refresh token stops working."""
+    try:
+        mcp_connection_service.revoke(db, current_client.id, connection_id)
+    except NotFound as error:
+        raise HTTPException(status_code=status_for(error), detail=detail_for(error, request_language(request)))
+    return Response(status_code=204)
 
 
 @router.get("/audit-logs", response_model=list[schemas.AiAuditLog])

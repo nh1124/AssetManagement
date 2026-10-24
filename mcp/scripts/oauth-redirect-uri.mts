@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import crypto from "node:crypto";
 import { setTimeout as sleep } from "node:timers/promises";
-import { createAuthCode, exchangeCodeForTokens, isRegisteredRedirectUri } from "../src/auth.js";
+import { isRegisteredRedirectUri } from "../src/auth.js";
+import { startFakeBackend } from "./fake-backend.mts";
 
 // ─── Matching rules (RFC 8252 §7.3) ───────────────────────
 
@@ -55,22 +55,14 @@ for (const [registered, requested] of refused) {
 }
 
 // The token request must repeat the redirect URI of the authorize request
-// exactly (RFC 6749 §4.1.3), port included.
-const verifier = crypto.randomBytes(32).toString("base64url");
-const resource = "http://localhost:13000/mcp";
-const authCode = () => createAuthCode({
-  client_id: "redirect-client", redirect_uri: "http://localhost:45789/callback",
-  code_challenge: crypto.createHash("sha256").update(verifier).digest("base64url"),
-  code_challenge_method: "S256", resource, allow_refresh_token: false,
-  username: "tester", backend_client_id: 1, issuer: "http://localhost:13000", auth_time_ms: Date.now(),
-});
-assert.equal(exchangeCodeForTokens({ code: authCode(), client_id: "redirect-client",
-  redirect_uri: "http://localhost:1234/callback", code_verifier: verifier, resource, canonical_resource: resource }), null);
-assert(exchangeCodeForTokens({ code: authCode(), client_id: "redirect-client",
-  redirect_uri: "http://localhost:45789/callback", code_verifier: verifier, resource, canonical_resource: resource }));
+// exactly (RFC 6749 §4.1.3), port included: the backend checks it when it
+// redeems the code (backend/tests/test_wp35_mcp_oauth.py).
 
 // ─── Both /authorize handlers use the rule ────────────────
 
+// The fake backend refuses every sign-in but the test account, so a refused
+// sign-in shows the redirect URI passed the check.
+const backend = await startFakeBackend();
 const port = String(34123 + Math.floor(Math.random() * 1000));
 const base = `http://127.0.0.1:${port}`;
 const child = spawn(process.execPath, ["--import", "tsx", "src/server-http.ts"], {
@@ -79,8 +71,7 @@ const child = spawn(process.execPath, ["--import", "tsx", "src/server-http.ts"],
     ...process.env,
     PORT: port,
     BASE_URL: `http://localhost:${port}`,
-    // Nothing listens there, so every sign-in is refused before a code is issued.
-    BACKEND_URL: "http://127.0.0.1:9",
+    BACKEND_URL: backend.url,
     APP_ENV: "development",
     JWT_SECRET: "redirect-test-secret-at-least-32-characters",
   },
@@ -130,6 +121,7 @@ try {
   }
 } finally {
   child.kill();
+  await backend.close();
 }
 
 console.log(`OAuth redirect URIs: ${allowed.length} allowed and ${refused.length} refused cases, and both /authorize handlers ignore only the loopback port`);

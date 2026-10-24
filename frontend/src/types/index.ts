@@ -168,6 +168,29 @@ export interface AiExecutionSettings {
     supported_change_request_operations: string[];
 }
 
+/** An AI app the person connected over MCP (WP35). */
+export interface McpConnection {
+    id: number;
+    client_name?: string | null;
+    oauth_client_id: string;
+    /** cimd: the app publishes its information at client_host; dcr: it registered with this server. */
+    client_source: 'cimd' | 'dcr';
+    client_host?: string | null;
+    redirect_host?: string | null;
+    scope: string;
+    connected_at: string;
+    last_used_at?: string | null;
+    expires_at: string;
+    refreshable: boolean;
+    /** reconnect_required: a password change or a sign-out everywhere came after the sign-in. */
+    status: 'active' | 'reconnect_required';
+}
+
+export interface McpConnections {
+    mcp_url: string;
+    connections: McpConnection[];
+}
+
 export interface AiOperationPolicy {
     id: number;
     client_id: number;

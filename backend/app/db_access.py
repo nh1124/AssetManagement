@@ -33,6 +33,9 @@ CLIENT_COLUMNS_USER_UPDATES = (
 
 ADMIN_TABLES = ("admin_users", "admin_user_permissions", "admin_sessions")
 AUTH_TABLES = ("client_mfa_settings", "client_recovery_codes")
+# The MCP server's OAuth state (WP35): written by the user backend for the MCP
+# server; the administrator reads it.
+MCP_OAUTH_TABLES = ("mcp_oauth_clients", "mcp_connections")
 
 USER_DATA_TABLES = (
     "accounts", "journal_entries", "transactions", "transaction_proposals", "transaction_batches",
@@ -61,6 +64,8 @@ def _build() -> dict[str, dict[str, frozenset[str]]]:
     for table in AUTH_TABLES:
         # The administrator's MFA reset removes a client's factor; it never writes one.
         access[table] = {USER_APP: FULL, ADMIN_APP: frozenset({"SELECT", "DELETE"})}
+    for table in MCP_OAUTH_TABLES:
+        access[table] = {USER_APP: FULL, ADMIN_APP: READ}
     for table in ADMIN_TABLES:
         access[table] = {ADMIN_APP: FULL}
     # Append-only for everyone but the owner.

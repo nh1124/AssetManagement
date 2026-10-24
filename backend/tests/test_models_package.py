@@ -12,10 +12,11 @@ from app.database import Base
 # WP23: 積立設定 records carry a kind, a destination account (口座振替), a schedule and the shortage choice.
 # §8-11: scenario_assumption_periods (期間ごとの前提). WP27: monthly_actions gone, registry_entries.records_transactions. WP33: period_closes gone.
 # WP34: ai_audit_logs.authorization / http_status / request_id / correlation_id.
-EXPECTED_METADATA_SHA256 = "008d6b580845842a98f61be250ecce2dd9a070d02b5f54b878396908e1ef950e"
+# WP35: mcp_oauth_clients and mcp_connections (the MCP server's OAuth state).
+EXPECTED_METADATA_SHA256 = "4a76dc9d025b621ad9d0eb62ac7acb2bb0fad1bab5b21457bb410efff704a770"
 
 MODEL_NAMES = (
-    "Client", "ClientMfaSetting", "ClientRecoveryCode",
+    "Client", "ClientMfaSetting", "ClientRecoveryCode", "McpOAuthClient", "McpConnection",
     "AdminUser", "AdminUserPermission", "AdminSession", "AdminAuditLog", "SystemSetting",
     "Account", "JournalEntry", "Transaction", "TransactionProposal",
     "TransactionBatch", "ExchangeRate", "FxTrackedCurrency", "Product",
@@ -93,8 +94,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 38
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 436
+    assert len(snapshot["table_names"]) == 40
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 465
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

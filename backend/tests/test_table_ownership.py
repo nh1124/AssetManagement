@@ -53,6 +53,8 @@ OWNERS: dict[str, str] = {
     "clients": "services/client_service",
     "client_mfa_settings": "services/mfa_service",
     "client_recovery_codes": "services/mfa_service",
+    "mcp_oauth_clients": "services/mcp_connection_service",
+    "mcp_connections": "services/mcp_connection_service",
 }
 
 # A restore's job is to rebuild every table of a client from a payload, so

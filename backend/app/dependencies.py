@@ -5,12 +5,17 @@ from typing import Optional
 from . import models
 from .database import get_db
 from .domain.messages import LANGUAGES, Message
+from .services import mcp_connection_service
 from .utils import observability
 from .utils.jwt import decode_token, token_is_current
 
 bearer_scheme = HTTPBearer(auto_error=False)
 APPROVAL_PENDING = Message("This account is waiting for approval.", ja="このアカウントは管理者の承認待ちです。")
 AUTHENTICATION_REQUIRED = Message("Authentication required", ja="サインインしてください。")
+MCP_CONNECTION_ENDED = Message(
+    "This AI app's connection has ended. Connect it again.",
+    ja="この AI アプリの接続は切れています。もう一度接続してください。",
+)
 
 
 def mcp_client_id() -> Optional[str]:
@@ -77,6 +82,13 @@ async def get_current_client(
 
     if not token_is_current(payload, client.tokens_valid_after):
         raise HTTPException(status_code=401, detail=AUTHENTICATION_REQUIRED)
+
+    # An AI app's token stops at the next request once its connection is ended (WP35).
+    if payload.get("chn") == "mcp":
+        connection_id = payload.get("cid")
+        if (not isinstance(connection_id, int) or isinstance(connection_id, bool)
+                or mcp_connection_service.active_connection(db, connection_id, client.id) is None):
+            raise HTTPException(status_code=401, detail=MCP_CONNECTION_ENDED)
 
     return client
 

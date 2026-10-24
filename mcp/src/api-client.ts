@@ -19,7 +19,28 @@ export interface McpRequestContext {
 
 const requestContext = new AsyncLocalStorage<McpRequestContext>();
 let stdioToken: string | null = null;
-const mcpTokenCache = new Map<string, string>();
+// MCP access token -> the backend token exchanged for it. The backend token lives
+// 15 minutes; an entry is dropped sooner so the map stays small (ops S-3.5).
+const MCP_TOKEN_CACHE_MS = 10 * 60 * 1000;
+const MCP_TOKEN_CACHE_MAX = 500;
+const mcpTokenCache = new Map<string, { token: string; expires_at_ms: number }>();
+
+function cachedBackendToken(mcpAccessToken: string): string | undefined {
+  const entry = mcpTokenCache.get(mcpAccessToken);
+  if (entry && entry.expires_at_ms > Date.now()) return entry.token;
+  mcpTokenCache.delete(mcpAccessToken);
+  return undefined;
+}
+
+function cacheBackendToken(mcpAccessToken: string, token: string): void {
+  if (mcpTokenCache.size >= MCP_TOKEN_CACHE_MAX) {
+    const now = Date.now();
+    for (const [key, entry] of mcpTokenCache) if (entry.expires_at_ms <= now) mcpTokenCache.delete(key);
+    const oldest = mcpTokenCache.keys().next().value;
+    if (mcpTokenCache.size >= MCP_TOKEN_CACHE_MAX && oldest !== undefined) mcpTokenCache.delete(oldest);
+  }
+  mcpTokenCache.set(mcpAccessToken, { token, expires_at_ms: Date.now() + MCP_TOKEN_CACHE_MS });
+}
 
 export function withMcpRequestContext<T>(context: McpRequestContext, fn: () => Promise<T>): Promise<T> {
   return requestContext.run(context, fn);
@@ -40,7 +61,7 @@ async function login(): Promise<string> {
 }
 
 async function exchangeMcpToken(context: McpRequestContext): Promise<string> {
-  const cached = mcpTokenCache.get(context.mcpAccessToken);
+  const cached = cachedBackendToken(context.mcpAccessToken);
   if (cached) return cached;
 
   const res = await fetch(`${BACKEND_URL}/auth/mcp/exchange`, {
@@ -51,7 +72,7 @@ async function exchangeMcpToken(context: McpRequestContext): Promise<string> {
   if (!res.ok) throw new Error(`MCP token exchange failed: ${res.status} ${await res.text()}`);
   const data = await res.json() as { access_token?: string };
   if (!data.access_token) throw new Error("MCP token exchange did not return an access token");
-  mcpTokenCache.set(context.mcpAccessToken, data.access_token);
+  cacheBackendToken(context.mcpAccessToken, data.access_token);
   return data.access_token;
 }
 

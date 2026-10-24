@@ -9,12 +9,10 @@ import { buildMcpServer } from "./server.js";
 import {
   decodeAccessToken,
   getDiscoveryMetadata,
-  registerClient,
+  callBackend,
   resolveClient,
-  createAuthCode,
-  exchangeCodeForTokens,
-  refreshAccessToken,
   isRegisteredRedirectUri,
+  isLoopbackRedirectUri,
   acceptedResources,
   ownResources,
   isResourceIn,
@@ -24,8 +22,9 @@ import {
 import { withMcpRequestContext, type McpRequestContext } from "./api-client.js";
 
 const PORT = parseInt(process.env.PORT ?? "3000");
-const BACKEND_URL = (process.env.BACKEND_URL ?? "http://backend:8000").replace(/\/$/, "");
 const LOG_BODIES = process.env.MCP_LOG_BODIES === "1";
+// Open registration (RFC 7591 §3) with a limit, so a loop cannot fill the backend's table.
+const REGISTRATIONS_PER_MINUTE = 20;
 
 // One JSON object per line, in the shape the backend logs use, so the two
 // streams can be read together by correlation_id.
@@ -34,48 +33,21 @@ function logEvent(event: string, fields: Record<string, unknown>, level: "info" 
   if (level === "error") console.error(line); else console.info(line);
 }
 
-interface BackendUserContext {
-  username: string;
-  backend_client_id: number;
-}
+// What the sign-in page says for each refusal the backend gives (/auth/mcp/authorize).
+const SIGN_IN_REFUSALS: Record<string, { status: number; message: string }> = {
+  invalid: { status: 401, message: "ユーザー名、パスワードまたは認証コードが正しくありません" },
+  locked: { status: 429, message: "試行が多すぎます。しばらくしてからもう一度お試しください。" },
+  setup_required: { status: 403, message: "先にアプリでサインインして、パスワードと認証アプリを設定してください。" },
+  approval_pending: { status: 403, message: "このアカウントは管理者の承認待ちです。" },
+};
 
-type CredentialResult = { user: BackendUserContext; error?: never }
-  | { user?: never; error: "setup_required" | "locked" | "invalid" };
+const registrationTimes: number[] = [];
 
-async function validateUserCredentials(username: string, password: string, code: string): Promise<CredentialResult> {
-  try {
-    const res = await fetch(`${BACKEND_URL}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (res.status === 429) return { error: "locked" };
-    if (!res.ok) return { error: "invalid" };
-    const data = await res.json() as { next_step?: string; mfa_token?: string };
-    if (data.next_step === "password_change" || data.next_step === "mfa_setup") {
-      return { error: "setup_required" };
-    }
-    if (data.next_step !== "mfa" || !data.mfa_token) return { error: "invalid" };
-    const factor = code.trim();
-    const verified = await fetch(`${BACKEND_URL}/auth/mfa/login/verify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        mfa_token: data.mfa_token,
-        ...(/^\d{6}$/.test(factor) ? { code: factor } : { recovery_code: factor }),
-      }),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (verified.status === 429) return { error: "locked" };
-    if (!verified.ok) return { error: "invalid" };
-    const result = await verified.json() as { access_token?: string; client_id?: number };
-    if (!result.access_token || !result.client_id) return { error: "invalid" };
-    return { user: { username: username.toLowerCase(), backend_client_id: result.client_id } };
-  } catch (err) {
-    console.warn("[auth] backend login error", (err as Error).message);
-    return { error: "invalid" };
-  }
+function registrationAllowed(now = Date.now()): boolean {
+  while (registrationTimes.length && registrationTimes[0] <= now - 60_000) registrationTimes.shift();
+  if (registrationTimes.length >= REGISTRATIONS_PER_MINUTE) return false;
+  registrationTimes.push(now);
+  return true;
 }
 
 // ─── Issuer / Resource helpers ────────────────────────────
@@ -144,23 +116,24 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
 
 // ─── Dynamic Client Registration ──────────────────────────
 
-app.post("/register", (req, res) => {
-  const body = req.body as Record<string, unknown>;
-  const client = registerClient(body);
-  console.info("[oauth] client registered", {
-    client_id: client.client_id,
-    client_name: client.client_name,
-    grant_types: client.grant_types,
+// Kept for apps without a client ID metadata document (owner 2026-10-24, C1). The
+// registration is stored by the backend, so it survives this container.
+app.post("/register", async (req, res) => {
+  if (!registrationAllowed()) { res.status(429).json({ error: "temporarily_unavailable" }); return; }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const reply = await callBackend("/clients", {
+    client_name: typeof body.client_name === "string" ? body.client_name : undefined,
+    redirect_uris: Array.isArray(body.redirect_uris) ? body.redirect_uris.filter(v => typeof v === "string") : [],
+    grant_types: Array.isArray(body.grant_types) ? body.grant_types.filter(v => typeof v === "string") : [],
   });
-  res.status(201).json({
-    client_id: client.client_id,
-    client_id_issued_at: client.client_id_issued_at,
-    client_name: client.client_name,
-    redirect_uris: client.redirect_uris,
-    grant_types: client.grant_types,
-    response_types: client.response_types,
-    token_endpoint_auth_method: client.token_endpoint_auth_method,
-  });
+  if (reply.status === 201) {
+    console.info("[oauth] client registered", {
+      client_id: reply.body.client_id,
+      client_name: reply.body.client_name,
+      grant_types: reply.body.grant_types,
+    });
+  }
+  res.status(reply.status === 422 ? 400 : reply.status).json(reply.status === 422 ? { error: "invalid_client_metadata" } : reply.body);
 });
 
 // ─── Authorization Endpoint ───────────────────────────────
@@ -189,6 +162,13 @@ function renderLoginForm(params: {
   const errorHtml = errorMsg
     ? `<p style="color:#b91c1c;background:#fee2e2;padding:8px 12px;border-radius:8px;font-size:.85rem">${esc(errorMsg)}</p>`
     : "";
+  // MCP authorization: the consent page names where the code goes, and warns when
+  // that is this computer, since any local program can listen there.
+  let redirectHost = params.redirect_uri;
+  try { redirectHost = new URL(params.redirect_uri).host; } catch { /* shown as given */ }
+  const loopbackHtml = isLoopbackRedirectUri(params.redirect_uri)
+    ? `<p class="warn">このコンピューターで動いているアプリに許可します。自分で起動したアプリ（Claude Code など）の接続でなければ、ログインしないでください。</p>`
+    : "";
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -207,13 +187,15 @@ function renderLoginForm(params: {
     button{width:100%;padding:.8rem;background:#0070f3;color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;margin-top:.25rem}
     button:hover{background:#005ed3}
     .note{font-size:.75rem;color:#888;text-align:center;margin-top:1rem}
+    .warn{font-size:.8rem;color:#92400e;background:#fef3c7;padding:8px 12px;border-radius:8px}
   </style>
 </head>
 <body>
   <div class="card">
     <div class="logo">📊</div>
     <h1>Asset Management MCP</h1>
-    <div class="app-label">接続アプリ: <strong>${esc(params.client_name ?? params.client_id)}</strong></div>
+    <div class="app-label">接続アプリ: <strong>${esc(params.client_name ?? params.client_id)}</strong><br>戻り先: <strong>${esc(redirectHost)}</strong></div>
+    ${loopbackHtml}
     ${errorHtml}
     <form method="POST" action="/authorize">
       <input type="hidden" name="response_type"          value="${esc(params.response_type)}">
@@ -232,7 +214,7 @@ function renderLoginForm(params: {
       <input type="text" id="mfa-code" name="code" required autocomplete="one-time-code" inputmode="numeric">
       <button type="submit">ログイン &amp; 許可</button>
     </form>
-    <p class="note">スコープ: ${esc(params.scope)}</p>
+    <p class="note">スコープ: ${esc(params.scope)}<br>接続はアプリの 自動化 › AI でいつでも切断できます。</p>
   </div>
 </body>
 </html>`;
@@ -281,14 +263,33 @@ app.post("/authorize", async (req, res) => {
   if (!isRegisteredRedirectUri(client.redirect_uris, redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
   if (!isResourceIn(resource, ownResources(canonicalResource))) { res.status(400).json({ error: "invalid_target" }); return; }
 
-  const credentials = await validateUserCredentials(username ?? "", password ?? "", factorCode ?? "");
-  if (!credentials.user) {
-    const message = credentials.error === "setup_required"
-      ? "先にアプリでサインインして、パスワードと認証アプリを設定してください。"
-      : credentials.error === "locked"
-        ? "試行が多すぎます。しばらくしてからもう一度お試しください。"
-        : "ユーザー名、パスワードまたは認証コードが正しくありません";
-    res.status(credentials.error === "locked" ? 429 : 401).setHeader("Content-Type", "text/html; charset=utf-8").send(renderLoginForm({
+  // The backend signs the person in (password + second factor) and records the
+  // connection; the code it returns is the connection's.
+  const issuer = buildOAuthIssuer(req);
+  const reply = await callBackend("/authorize", {
+    username: username ?? "",
+    password: password ?? "",
+    factor: factorCode ?? "",
+    oauth_client_id: client_id,
+    client_name: client.client_name,
+    client_source: client.source,
+    redirect_uri,
+    code_challenge,
+    code_challenge_method: code_challenge_method ?? "S256",
+    scope: scope ?? "mcp",
+    resource,
+    issuer,
+    allow_refresh: client.grant_types.includes("refresh_token"),
+  });
+  const code = reply.status === 200 && typeof reply.body.code === "string" ? reply.body.code : null;
+  if (code === null) {
+    const refusal = SIGN_IN_REFUSALS[String(reply.body.error)];
+    if (!refusal) {
+      console.warn("[oauth] authorize refused by the backend", { client_id, status: reply.status, error: reply.body.error });
+      res.status(reply.status >= 500 ? 502 : 400).json({ error: reply.body.error ?? "server_error" });
+      return;
+    }
+    res.status(refusal.status).setHeader("Content-Type", "text/html; charset=utf-8").send(renderLoginForm({
       client_id,
       client_name: client.client_name,
       redirect_uri,
@@ -298,86 +299,56 @@ app.post("/authorize", async (req, res) => {
       scope: scope ?? "mcp",
       resource,
       response_type,
-    }, message));
+    }, refusal.message));
     return;
   }
 
-  const validUser = credentials.user;
-  const issuer = buildOAuthIssuer(req);
-  console.info("[oauth] authorize POST success", { client_id, username: validUser.username, resource });
-
-  const code = createAuthCode({
-    client_id,
-    redirect_uri,
-    code_challenge,
-    code_challenge_method: code_challenge_method ?? "S256",
-    scope: scope ?? "mcp",
-    state,
-    resource,
-    allow_refresh_token: client.grant_types.includes("refresh_token"),
-    username: validUser.username,
-    backend_client_id: validUser.backend_client_id,
-    auth_time_ms: Date.now(),
-    issuer,
-  });
-
+  console.info("[oauth] authorize POST success", { client_id, username: reply.body.username, resource });
   const redirectUrl = new URL(redirect_uri);
   redirectUrl.searchParams.set("code", code);
   if (state) redirectUrl.searchParams.set("state", state);
+  // RFC 9207: the client checks the code came from the server it asked.
+  redirectUrl.searchParams.set("iss", issuer);
   res.redirect(302, redirectUrl.toString());
 });
 
 // ─── Token Endpoint ───────────────────────────────────────
 
-app.post("/token", (req, res) => {
-  const b = req.body as Record<string, string>;
-  const { grant_type } = b;
-  const canonical_resource = buildCanonicalMcpResource(req);
+app.post("/token", async (req, res) => {
+  const b = (req.body ?? {}) as Record<string, string>;
+  const { grant_type, client_id } = b;
+  // RFC 6749 §5.1: token responses are never cached.
+  res.setHeader("Cache-Control", "no-store").setHeader("Pragma", "no-cache");
 
   console.info("[oauth] token request", {
     grant_type: grant_type || "(missing)",
-    client_id: b.client_id || "(missing)",
+    client_id: client_id || "(missing)",
     has_code: !!b.code,
     has_refresh_token: !!b.refresh_token,
     resource: b.resource || "(missing)",
   });
 
-  if (grant_type === "authorization_code") {
-    const { code, redirect_uri, client_id, code_verifier } = b;
-    const resource = b.resource || undefined;
-
-    if (!code || !redirect_uri || !client_id || !code_verifier) {
-      res.status(400).json({ error: "invalid_request" }); return;
-    }
-
-    const tokens = exchangeCodeForTokens({ code, client_id, redirect_uri, code_verifier, resource, canonical_resource });
-    if (!tokens) {
-      console.warn("[oauth] token exchange failed", { grant_type: "authorization_code", client_id });
-      res.status(400).json({ error: "invalid_grant" }); return;
-    }
-
-    console.info("[oauth] access token issued", { grant_type: "authorization_code", client_id, has_refresh: !!tokens.refresh_token });
-    res.json(tokens);
-
-  } else if (grant_type === "refresh_token") {
-    const { refresh_token, client_id } = b;
-
-    if (!refresh_token || !client_id) {
-      res.status(400).json({ error: "invalid_request" }); return;
-    }
-
-    const tokens = refreshAccessToken({ client_id, refresh_token, canonical_resource });
-    if (!tokens) {
-      console.warn("[oauth] refresh token exchange failed", { client_id });
-      res.status(400).json({ error: "invalid_grant" }); return;
-    }
-
-    console.info("[oauth] access token refreshed", { client_id });
-    res.json(tokens);
-
-  } else {
-    res.status(400).json({ error: "unsupported_grant_type" });
+  if (grant_type !== "authorization_code" && grant_type !== "refresh_token") {
+    res.status(400).json({ error: grant_type ? "unsupported_grant_type" : "invalid_request" }); return;
   }
+  if (!client_id) { res.status(400).json({ error: "invalid_request" }); return; }
+
+  // The backend redeems the code or rotates the refresh token and signs the access
+  // token; the resource was fixed at /authorize and travels with the connection.
+  const reply = await callBackend("/token", {
+    grant_type,
+    client_id,
+    code: b.code,
+    redirect_uri: b.redirect_uri,
+    code_verifier: b.code_verifier,
+    refresh_token: b.refresh_token,
+  });
+  if (reply.status === 200) {
+    console.info("[oauth] access token issued", { grant_type, client_id, has_refresh: "refresh_token" in reply.body });
+  } else {
+    console.warn("[oauth] token request refused", { grant_type, client_id, status: reply.status, error: reply.body.error });
+  }
+  res.status(reply.status === 422 ? 400 : reply.status).json(reply.status === 422 ? { error: "invalid_request" } : reply.body);
 });
 
 // ─── Auth Middleware ───────────────────────────────────────
@@ -387,7 +358,9 @@ function requireBearer(req: Request, res: Response, next: NextFunction): void {
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) {
     console.warn("[mcp] missing Bearer token", { method: req.method, path: req.path });
-    res.setHeader("WWW-Authenticate", `Bearer realm="${issuer}", scope="mcp"`).status(401).json({ error: "unauthorized" });
+    res.setHeader("WWW-Authenticate",
+      `Bearer realm="${issuer}", resource_metadata="${issuer}/.well-known/oauth-protected-resource", scope="mcp"`)
+      .status(401).json({ error: "unauthorized" });
     return;
   }
   const token = auth.slice(7);

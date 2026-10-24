@@ -40,6 +40,14 @@ EXCLUDED: dict[str, str] = {
         "Recovery codes are credentials for the same reason, and restoring them "
         "would revive codes the user has already spent."
     ),
+    "mcp_oauth_clients": (
+        "The AI apps registered with this installation's MCP server. They are not "
+        "a person's data, and an id from another installation means nothing here."
+    ),
+    "mcp_connections": (
+        "Grants to AI apps with their refresh-token hashes: credentials, and bound "
+        "to this installation's MCP server. Restoring them would revive ended connections."
+    ),
     "ai_operation_policies": (
         "What an AI may do is a property of this installation, not of the data. "
         "Restoring a permissive policy from an old backup would widen access "

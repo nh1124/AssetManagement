@@ -42,7 +42,22 @@ def _client(db, client_id: int, username: str, *, mfa_enabled: bool | None = Tru
     return client
 
 
-def _mcp_token(*, username: str, backend_client_id: int, issuer: str = "http://localhost:13000", auth_time_ms="now") -> str:
+def _connect(db, client_id: int, *, oauth_client_id: str = "mcp_test_client", connection_id: int | None = None) -> int:
+    """An active connection, as /auth/mcp/token leaves one (WP35)."""
+    now = datetime.utcnow()
+    connection = models.McpConnection(
+        id=connection_id, client_id=client_id, oauth_client_id=oauth_client_id, client_source="dcr",
+        redirect_uri="http://localhost/callback", scope="mcp", resource="http://localhost:13000/mcp",
+        issuer="http://localhost:13000", auth_time_ms=int(datetime.now(timezone.utc).timestamp() * 1000),
+        allow_refresh=False, created_at=now, activated_at=now, expires_at=now + timedelta(hours=1),
+    )
+    db.add(connection)
+    db.commit()
+    return connection.id
+
+
+def _mcp_token(*, username: str, backend_client_id: int, issuer: str = "http://localhost:13000", auth_time_ms="now",
+               cid: int | None = None) -> str:
     now = datetime.utcnow()
     return jwt.encode(
         {
@@ -57,6 +72,7 @@ def _mcp_token(*, username: str, backend_client_id: int, issuer: str = "http://l
             "iat": now,
             **({} if auth_time_ms is None else {"auth_time_ms": datetime.now(timezone.utc).timestamp() * 1000 if auth_time_ms == "now" else auth_time_ms}),
             "exp": now + timedelta(minutes=5),
+            **({} if cid is None else {"cid": cid}),
         },
         settings.mcp_jwt_secret,
         algorithm=settings.jwt_algorithm,
@@ -67,7 +83,8 @@ def test_mcp_token_exchange_issues_backend_token_for_subject() -> None:
     db = _session()
     try:
         client = _client(db, 1, "alice")
-        token = _mcp_token(username="alice", backend_client_id=client.id)
+        cid = _connect(db, client.id)
+        token = _mcp_token(username="alice", backend_client_id=client.id, cid=cid)
 
         result = auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=token), db)
         payload = decode_token(result["access_token"])
@@ -78,6 +95,8 @@ def test_mcp_token_exchange_issues_backend_token_for_subject() -> None:
         assert payload["sub"] == str(client.id)
         assert payload["type"] == "access"
         assert isinstance(payload["iat_ms"], (int, float))
+        assert payload["chn"] == "mcp" and payload["cid"] == cid
+        assert db.get(models.McpConnection, cid).last_used_at is not None
     finally:
         db.close()
 
@@ -86,7 +105,8 @@ def test_mcp_token_exchange_accepts_local_https_issuer_variant() -> None:
     db = _session()
     try:
         client = _client(db, 1, "alice")
-        token = _mcp_token(username="alice", backend_client_id=client.id, issuer="https://localhost:13000")
+        token = _mcp_token(username="alice", backend_client_id=client.id, issuer="https://localhost:13000",
+                           cid=_connect(db, client.id))
 
         result = auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=token), db)
 
@@ -172,8 +192,33 @@ def test_exchange_revocation_compares_original_authorization_in_milliseconds():
         with pytest.raises(HTTPException) as error:
             auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=old), db)
         assert error.value.status_code == 401
-        current = _mcp_token(username="alice", backend_client_id=1, auth_time_ms=cutoff_ms)
+        current = _mcp_token(username="alice", backend_client_id=1, auth_time_ms=cutoff_ms, cid=_connect(db, 1))
         result = auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=current), db)
         assert decode_token(result["access_token"])["iat_ms"]
+    finally:
+        db.close()
+
+
+def test_exchange_requires_a_standing_connection_of_the_same_app_and_person():
+    """WP35: a token without cid, or naming an ended or foreign connection, is refused."""
+    db = _session()
+    try:
+        alice = _client(db, 1, "alice")
+        _client(db, 2, "bob")
+        refused = [
+            _mcp_token(username="alice", backend_client_id=1),
+            _mcp_token(username="alice", backend_client_id=1, cid=999),
+            _mcp_token(username="alice", backend_client_id=1, cid=_connect(db, 2)),
+            _mcp_token(username="alice", backend_client_id=1, cid=_connect(db, 1, oauth_client_id="mcp_other")),
+        ]
+        ended = _connect(db, alice.id)
+        connection = db.get(models.McpConnection, ended)
+        connection.revoked_at = datetime.utcnow()
+        db.commit()
+        refused.append(_mcp_token(username="alice", backend_client_id=1, cid=ended))
+        for token in refused:
+            with pytest.raises(HTTPException) as error:
+                auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=token), db)
+            assert error.value.status_code == 401
     finally:
         db.close()

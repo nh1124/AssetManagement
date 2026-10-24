@@ -91,6 +91,9 @@ def _seed(db, scenario, today):
                                description="Lunch", from_account_id=cash.id, to_account_id=expense.id)
     batch = models.TransactionBatch(client_id=1, label="Guard batch")
     db.add(batch)
+    # The MCP server reads a DCR registration before showing its consent page (WP35).
+    db.add(models.McpOAuthClient(client_id="mcp_guard", client_name="Guard app",
+                                 redirect_uris=["http://localhost/callback"], grant_types=["authorization_code"]))
     db.flush()
     lunch.batch_id = batch.id
     # Drive saved scenario reads with real assumptions, without granting a GET exception.
@@ -169,6 +172,7 @@ def _seed(db, scenario, today):
     ])
     db.commit()
     return {"batch_id": batch.id, "account_id": cash.id, "event_id": goal.id, "life_event_id": goal.id,
+            "oauth_client_id": "mcp_guard",
             # lunch is the trigger a capsule rule would fire on, so the
             # reservation read is driven against an entry that has legs.
             "capsule_id": capsule.id, "product_id": product.id, "transaction_id": lunch.id, "month": today.strftime("%Y-%m"), "period": today.strftime("%Y-%m"),

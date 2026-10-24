@@ -13,6 +13,7 @@ import type {
     AiChangeRequest,
     AiAuditLog,
     AiExecutionSettings,
+    McpConnections,
     AiOperationPolicy,
     AiOperationPolicyPayload,
     AnalysisSummary,
@@ -166,6 +167,15 @@ export const getAiExecutionSettings = async (): Promise<AiExecutionSettings> => 
 export const updateAiExecutionSettings = async (settings: AiExecutionSettings): Promise<AiExecutionSettings> => {
     const response = await api.put('/ai/execution-settings', settings);
     return response.data;
+};
+
+export const getMcpConnections = async (): Promise<McpConnections> => {
+    const response = await api.get('/ai/mcp/connections');
+    return response.data;
+};
+
+export const endMcpConnection = async (id: number): Promise<void> => {
+    await api.delete(`/ai/mcp/connections/${id}`);
 };
 
 export const getAiAuditLogs = async (params?: { limit?: number; offset?: number }): Promise<AiAuditLog[]> => {

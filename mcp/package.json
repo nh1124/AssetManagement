@@ -14,7 +14,7 @@
     "contract:write-tools": "node scripts/write-tool-contracts.mjs",
     "contract:monthly-planning": "node scripts/monthly-planning-contract.mjs",
     "test:api-client-hardening": "node --import tsx scripts/api-client-hardening.mts",
-    "test:oauth-auth-time": "node --import tsx scripts/oauth-auth-time.mts",
+    "test:oauth-backend-delegation": "node --import tsx scripts/oauth-backend-delegation.mts",
     "test:oauth-redirect-uri": "node --import tsx scripts/oauth-redirect-uri.mts",
     "test:oauth-token-audience": "node --import tsx scripts/oauth-token-audience.mts",
     "test:tool-structured-content": "node --import tsx scripts/tool-structured-content.mts",

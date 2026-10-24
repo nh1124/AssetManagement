@@ -27,6 +27,7 @@ from .routers import (
     life_events,
     life_scenarios,
     household_members,
+    mcp_oauth,
     period_reviews,
     plan,
     plan_reflection,
@@ -207,6 +208,7 @@ app.include_router(ai_change_requests.router)
 app.include_router(clients.router)
 app.include_router(data_transfer.router)
 app.include_router(auth.router)
+app.include_router(mcp_oauth.router)
 app.include_router(capsules.router, dependencies=[Depends(get_current_client)])
 app.include_router(reports.router, dependencies=[Depends(get_current_client)])
 app.include_router(exchange_rates.router, dependencies=[Depends(get_current_client)])
