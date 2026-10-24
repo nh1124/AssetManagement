@@ -19,6 +19,7 @@ from backend.app.services.ai_context_service import (
     list_context_resources,
 )
 from backend.app.services.ledger_service import process_transaction
+from backend.app.utils import observability
 from backend.app.utils.password import hash_password
 
 
@@ -150,7 +151,13 @@ def test_context_resources_endpoint_writes_low_risk_audit_log() -> None:
     try:
         client = _client_with_data(db)
 
-        data = ai_operations.get_ai_context_resources(_request(), db, client)
+        # The middleware binds the MCP channel from the token (WP34); calling the
+        # endpoint directly, the test binds what the middleware would have.
+        bound = observability.bind(observability.RequestContext(channel="mcp", mcp_client_id="test-mcp"))
+        try:
+            data = ai_operations.get_ai_context_resources(_request(), db, client)
+        finally:
+            observability.reset(bound)
         audit = db.query(models.AiAuditLog).one()
 
         assert any(item["resource"] == "summary" for item in data)

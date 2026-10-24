@@ -158,6 +158,10 @@ export type AiOperationDecision = 'allowed' | 'denied' | 'approval_required' | '
 export type AiOperationSource = 'frontend' | 'mcp_http' | 'mcp_stdio' | 'backend';
 export type AiChangeRequestStatus = 'draft' | 'pending' | 'approved' | 'applied' | 'rejected' | 'expired' | 'failed';
 export type AiMcpWriteMode = 'direct_write' | 'change_request';
+/** What let an AI operation through or stopped it (WP34). */
+export type AiAuthorization =
+    | 'read' | 'direct_policy' | 'direct_mode' | 'change_request' | 'human_approved'
+    | 'refused_scope' | 'refused_policy' | 'refused_mode' | 'failed';
 
 export interface AiExecutionSettings {
     mcp_write_mode: AiMcpWriteMode;
@@ -201,6 +205,10 @@ export interface AiAuditLog {
     ip_address?: string | null;
     user_agent?: string | null;
     created_at: string;
+    authorization?: AiAuthorization | null;
+    http_status?: number | null;
+    request_id?: string | null;
+    correlation_id?: string | null;
 }
 
 export interface AiChangeRequestPreview {

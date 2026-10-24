@@ -36,7 +36,7 @@
 | ゴール | `life_scenarios_create/duplicate/update/delete`、`life_events_create/update/delete`（作成は `scenario_id` 必須）、`life_event_links_*`、`life_event_conditions_*`、`household_members_*`、`contribution_plans_create/update/delete`（積立設定）、`assumption_periods_create/update/delete`（期間ごとの前提） | ゴールのシナリオは削除できない |
 | 振り返り | `period_reviews_upsert` | |
 | 取り置きのお金 | `capsules_contribute`, `capsules_drawdown`, `capsules_set_account_claim` | 確保額が変わる。対象と額を確認してから |
-| 家計簿の未反映 | `transaction_proposals_list/approve/reject`, `depreciation_record/amend` | |
+| 家計簿の未反映 | `transaction_proposals_list`, `depreciation_record/amend` | 未反映の記帳・却下は人が画面で行う（MCP からは拒否） |
 | 通知・健全性・照合 | `notifications_decide`, `data_health_repair`, `reconcile_adjust` | repair と adjust は仕訳・計画行を変える。先に check / reconcile_account で確認 |
 | 為替 | `fx_tracked_currencies_create/delete`, `exchange_rates_auto_update`, `exchange_rates_delete` | auto_update は外部取得（手入力のレートは無い） |
 | データ移送 | `data_export`, `data_import_validate`, `data_import_replace_current_client` | **replace は全置換・最危険**。validate → ユーザー確認必須 |
@@ -45,8 +45,13 @@
 ## AI 承認フロー
 
 - `ai_change_requests_create/preview/list/refresh_preview` — 変更案の作成・確認
-- `ai_change_requests_approve/apply/reject` — **ユーザーの明示指示があるときのみ**
+- 承認・却下は**人だけ**（画面の承認の受信箱）。AI が承認・却下しようとすると backend が 403 を返す。人が承認したものを適用するのが `ai_change_requests_apply`
 - write ツールが change request モードのとき、`*_create/update` の戻りは「書き込み結果」ではなく「承認待ち change request」。報告時に区別すること。
+
+## AI に許されない操作と監査（WP34）
+
+- backend は MCP のトークン（`chn=mcp`）で来た要求をすべて AI 操作として扱い、1 要求 1 行を AI 監査ログ（`ai_audit_logs`）に残す。読み取り・直接書き込み・承認待ち・拒否のどれでも残り、「許可の根拠」（`authorization`）が付く。
+- MCP からは 403：AI の権限（ポリシー・書き込み方式、設定の `ai_operation`）の変更、アカウントの操作（`/auth/*`）、承認・却下、書き込み方式が change request のときの直接書き込み。
 
 ## 書き込み契約の要点
 

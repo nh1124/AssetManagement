@@ -21,6 +21,8 @@ import json
 import logging
 import os
 import re
+import weakref
+from contextvars import ContextVar, Token
 from datetime import date, datetime
 
 from sqlalchemy import event, inspect, select
@@ -31,6 +33,25 @@ logger = logging.getLogger("app.audit")
 
 _BUFFER = "am_audit_buffer"
 _PENDING = "am_audit_pending"
+
+# The committed changes of the request in progress, for whoever asked to see
+# them (the AI operation audit, WP34). A list, not a value: the endpoint runs in
+# a worker thread with a copy of the context, and appends to the same list.
+_collected: ContextVar[list | None] = ContextVar("am_audit_collected", default=None)
+
+# Targets already hooked. Not event.contains(): SQLAlchemy keys that registry by
+# id(target), so a new sessionmaker allocated where a dead one lived looked
+# hooked and went unaudited (seen in the tests, which make one per test).
+_INSTALLED: "weakref.WeakSet" = weakref.WeakSet()
+
+
+def start_collecting() -> tuple[Token, list]:
+    changes: list = []
+    return _collected.set(changes), changes
+
+
+def stop_collecting(token: Token) -> None:
+    _collected.reset(token)
 
 # Columns whose values must not reach a log, by name.
 _REDACTED = re.compile(r"password|secret|token|api_key|code_hash|ai_config", re.IGNORECASE)
@@ -150,6 +171,9 @@ def _after_commit(session) -> None:
     session.info.pop(_PENDING, None)
     if not buffer:
         return
+    collected = _collected.get()
+    if collected is not None:
+        collected.extend(buffer)
     for sequence, record in enumerate(buffer, start=1):
         log_event(logger, "db.change", seq=sequence, **record)
     tables: dict[str, int] = {}
@@ -180,7 +204,7 @@ def install_db_audit(target) -> bool:
     """
     if os.getenv("LOG_DB_CHANGES", "1").strip() in {"0", "false", "no"}:
         return False
-    if event.contains(target, "before_flush", _before_flush):
+    if target in _INSTALLED:
         return True
     event.listen(target, "before_flush", _before_flush)
     event.listen(target, "after_flush", _after_flush)
@@ -188,4 +212,5 @@ def install_db_audit(target) -> bool:
     event.listen(target, "after_commit", _after_commit)
     event.listen(target, "after_rollback", _after_rollback)
     event.listen(target, "after_transaction_end", _after_transaction_end)
+    _INSTALLED.add(target)
     return True

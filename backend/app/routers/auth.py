@@ -268,18 +268,22 @@ def exchange_mcp_token(req: McpTokenExchangeRequest, db: Session = Depends(get_d
     if not mfa_service.mfa_enabled(db, client.id):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Message("MFA setup required", ja="先にアプリで認証アプリを設定してください。"))
 
+    mcp_client_id = str(payload.get("client_id") or "")
     return {
+        # chn=mcp binds the channel to the token: every request made with it is an AI
+        # operation, gated and audited as one, whatever headers it carries (WP34).
         "access_token": create_typed_token(
             user_id=client.id,
             username=client.name,
             token_type="access",
             expires_delta=timedelta(minutes=15),
+            extra_claims={"chn": "mcp", "mcp_client_id": mcp_client_id},
         ),
         "token_type": "bearer",
         "client_id": client.id,
         "name": client.name,
         "username": client.username,
-        "mcp_client_id": str(payload.get("client_id") or ""),
+        "mcp_client_id": mcp_client_id,
     }
 
 @router.post("/register", response_model=AuthResponse, response_model_exclude_unset=True)

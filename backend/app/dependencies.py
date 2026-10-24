@@ -5,11 +5,23 @@ from typing import Optional
 from . import models
 from .database import get_db
 from .domain.messages import LANGUAGES, Message
+from .utils import observability
 from .utils.jwt import decode_token, token_is_current
 
 bearer_scheme = HTTPBearer(auto_error=False)
 APPROVAL_PENDING = Message("This account is waiting for approval.", ja="このアカウントは管理者の承認待ちです。")
 AUTHENTICATION_REQUIRED = Message("Authentication required", ja="サインインしてください。")
+
+
+def mcp_client_id() -> Optional[str]:
+    """The MCP client behind the request in progress; None for a person's request.
+
+    Read from the request context, which the middleware binds from the token's
+    chn claim (WP34): a request made with an MCP token is an AI request, gated as
+    one, whether or not it carries the X-MCP-Client-Id header.
+    """
+    context = observability.current()
+    return context.mcp_client_id if context.channel == "mcp" else None
 
 
 def request_language(request: Request) -> Optional[str]:

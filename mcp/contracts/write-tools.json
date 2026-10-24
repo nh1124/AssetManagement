@@ -262,30 +262,12 @@
     "required_fields": ["resource", "action"]
   },
   {
-    "tool": "ai_change_requests_approve",
-    "method": "post",
-    "path": "/ai/change-requests/{change_request_id}/approve",
-    "body": "object",
-    "source": "src/tools/ai-change-requests.ts",
-    "path_fragment": "/ai/change-requests/${id}/approve",
-    "allowed_fields": ["step_up_token"],
-    "required_fields": []
-  },
-  {
     "tool": "ai_change_requests_apply",
     "method": "post",
     "path": "/ai/change-requests/{change_request_id}/apply",
     "body": "none",
     "source": "src/tools/ai-change-requests.ts",
     "path_fragment": "/ai/change-requests/${id}/apply"
-  },
-  {
-    "tool": "ai_change_requests_reject",
-    "method": "post",
-    "path": "/ai/change-requests/{change_request_id}/reject",
-    "body": "none",
-    "source": "src/tools/ai-change-requests.ts",
-    "path_fragment": "/ai/change-requests/${id}/reject"
   },
   {
     "tool": "ai_change_requests_refresh_preview",
@@ -644,24 +626,6 @@
     "path_fragment": "/depreciations/${depreciationId}",
     "allowed_fields": ["amount", "date", "expense_account_id"],
     "required_fields": ["amount"]
-  },
-  {
-    "tool": "transaction_proposals_approve",
-    "method": "post",
-    "path": "/transactions/proposals/{proposal_id}/approve",
-    "body": "none",
-    "source": "src/tools/ui-operations.ts",
-    "path_fragment": "/transactions/proposals/${proposalId}/approve"
-  },
-  {
-    "tool": "transaction_proposals_reject",
-    "method": "post",
-    "path": "/transactions/proposals/{proposal_id}/reject",
-    "body": "object",
-    "source": "src/tools/ui-operations.ts",
-    "path_fragment": "/transactions/proposals/${proposalId}/reject",
-    "allowed_fields": ["note"],
-    "required_fields": []
   },
   {
     "tool": "notifications_decide",

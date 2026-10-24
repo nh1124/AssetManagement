@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..dependencies import get_current_client
+from ..dependencies import get_current_client, mcp_client_id as request_mcp_client_id
 from ..workflows.ai_change_request_workflow import (
     apply_change_request,
     approve_change_request,
@@ -23,7 +23,8 @@ def _with_request_context(
     payload: schemas.AiChangeRequestPreviewRequest | schemas.AiChangeRequestCreate,
     request: Request,
 ):
-    mcp_client_id = payload.mcp_client_id or request.headers.get("x-mcp-client-id")
+    # The token-bound client wins over whatever the payload names (WP34).
+    mcp_client_id = request_mcp_client_id() or payload.mcp_client_id
     tool_name = payload.tool_name or request.headers.get("x-mcp-tool-name")
     source = "mcp_http" if mcp_client_id and payload.source == "backend" else payload.source
     return payload.model_copy(update={

@@ -23,6 +23,7 @@ def create_typed_token(
     username: str,
     token_type: str,
     expires_delta: Optional[timedelta] = None,
+    extra_claims: Optional[dict] = None,
 ) -> str:
     if expires_delta is None:
         expires_delta = timedelta(minutes=settings.jwt_expire_minutes)
@@ -31,6 +32,8 @@ def create_typed_token(
     expire = now + expires_delta
 
     payload = {
+        # Extra claims first, so none of them can replace who the token is for or when it ends.
+        **(extra_claims or {}),
         "sub": str(user_id),
         "username": username,
         "exp": expire,

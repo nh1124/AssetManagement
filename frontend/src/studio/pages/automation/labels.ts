@@ -1,4 +1,4 @@
-import type { AiChangeRequestStatus, AiOperationDecision, AiOperationMode, AiOperationRisk, AiOperationSource } from '../../../types';
+import type { AiAuthorization, AiChangeRequestStatus, AiOperationDecision, AiOperationMode, AiOperationRisk, AiOperationSource } from '../../../types';
 import { labels, tr } from '../../i18n';
 
 export const MODE_LABELS = labels<AiOperationMode>({
@@ -26,6 +26,18 @@ export const SOURCE_LABELS = labels<AiOperationSource>({
 });
 export const DECISION_LABELS = labels<AiOperationDecision>({
     allowed: ['許可', 'Allowed'], denied: ['拒否', 'Denied'], approval_required: ['承認が必要', 'Needs approval'], applied: ['適用済み', 'Applied'], failed: ['失敗', 'Failed'],
+});
+/** What let an AI operation through or stopped it (WP34). */
+export const AUTHORIZATION_LABELS = labels<AiAuthorization>({
+    read: ['読み取り', 'Read'],
+    direct_policy: ['直接記帳（権限ルールで許可）', 'Posted directly (allowed by a permission rule)'],
+    direct_mode: ['直接書き込み（書き込み方式で許可）', 'Written directly (allowed by the write mode)'],
+    change_request: ['承認リクエストを作成', 'Change request created'],
+    human_approved: ['人の承認の後に適用', 'Applied after a person approved'],
+    refused_scope: ['拒否（AI には許されない操作）', 'Refused (not allowed to the AI)'],
+    refused_policy: ['拒否（権限ルール）', 'Refused (permission rule)'],
+    refused_mode: ['拒否（承認リクエスト方式）', 'Refused (change-request mode)'],
+    failed: ['失敗', 'Failed'],
 });
 export const buttonClass = 'rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40';
 export const inputClass = 'rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] px-3 py-2 text-sm text-[var(--studio-text)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]';

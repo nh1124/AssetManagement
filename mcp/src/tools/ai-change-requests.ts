@@ -98,36 +98,10 @@ export function registerAiChangeRequestTools(server: McpServer): void {
   );
 
   server.registerTool(
-    "ai_change_requests_approve",
-    {
-      title: "Approve AI change request",
-      description: "Approves a pending or draft AI change request. Critical requests require a backend step-up token.",
-      inputSchema: z
-        .object({
-          id: z.number().int().min(1).describe("Change request ID"),
-          step_up_token: z.string().optional().describe("Required for MFA-protected critical requests"),
-        })
-        .strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async ({ id, step_up_token }) => {
-      try {
-        const data = await api.post<unknown>(`/ai/change-requests/${id}/approve`, { step_up_token });
-        return {
-          content: [{ type: "text", text: `Approved AI change request:\n${JSON.stringify(data, null, 2)}` }],
-          structuredContent: toStructured(data),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
-
-  server.registerTool(
     "ai_change_requests_apply",
     {
       title: "Apply AI change request",
-      description: "Applies an approved AI change request. Fails with conflict if the target changed after preview.",
+      description: "Applies an AI change request that a person approved in the app (the AI cannot approve). Fails with conflict if the target changed after preview.",
       inputSchema: z.object({ id: z.number().int().min(1).describe("Change request ID") }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -136,27 +110,6 @@ export function registerAiChangeRequestTools(server: McpServer): void {
         const data = await api.post<unknown>(`/ai/change-requests/${id}/apply`, {});
         return {
           content: [{ type: "text", text: `Applied AI change request:\n${JSON.stringify(data, null, 2)}` }],
-          structuredContent: toStructured(data),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
-
-  server.registerTool(
-    "ai_change_requests_reject",
-    {
-      title: "Reject AI change request",
-      description: "Rejects a draft, pending, or approved AI change request.",
-      inputSchema: z.object({ id: z.number().int().min(1).describe("Change request ID") }).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async ({ id }) => {
-      try {
-        const data = await api.post<unknown>(`/ai/change-requests/${id}/reject`, {});
-        return {
-          content: [{ type: "text", text: `Rejected AI change request:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data),
         };
       } catch (err) {

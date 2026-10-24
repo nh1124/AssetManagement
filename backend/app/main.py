@@ -38,6 +38,7 @@ from .routers import (
     transactions,
 )
 from .dependencies import get_current_client
+from .routers.ai_operation_audit import AiOperationAuditMiddleware
 from .utils.observability import (
     RequestLogMiddleware,
     install_db_audit,
@@ -168,6 +169,9 @@ async def shutdown_event() -> None:
             pass
         _automatic_recording_task = None
 
+# Innermost: scopes and audits every MCP request (WP34). It reads the request
+# context, so it must sit inside RequestLogMiddleware, which binds it.
+app.add_middleware(AiOperationAuditMiddleware)
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,

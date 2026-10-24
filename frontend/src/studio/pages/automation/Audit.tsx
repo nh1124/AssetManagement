@@ -4,10 +4,33 @@ import { getAiAuditLogs } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { AiAuditLog } from '../../../types';
 import { assetErrorMessage, useResource } from '../../useResource';
-import { buttonClass, DECISION_LABELS, SOURCE_LABELS } from './labels';
+import { AUTHORIZATION_LABELS, buttonClass, DECISION_LABELS, SOURCE_LABELS } from './labels';
 import { tr } from '../../i18n';
 
 const PAGE_SIZE = 50;
+
+const asRecord = (value: unknown): Record<string, unknown> => (value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {});
+
+/** The request line ("PUT /transactions/358"), where the row recorded one (WP34). */
+function requestLine(row: AiAuditLog) {
+    const request = 'method' in row.request_summary ? row.request_summary : asRecord(row.request_summary.http);
+    return typeof request.method === 'string' && typeof request.path === 'string' ? `${request.method} ${request.path}` : '';
+}
+
+/** The tables the operation changed, with how many rows each ("transactions 1・journal_entries 2"). */
+function changedTables(row: AiAuditLog) {
+    return Object.entries(asRecord(row.diff_summary.tables)).map(([table, count]) => `${table} ${count}`).join(tr('・', ', '));
+}
+
+/** What let the operation through, with the permission rule when one did. */
+function authorizationText(row: AiAuditLog) {
+    if (!row.authorization) return '—';
+    const policy = asRecord(asRecord(row.result_summary.authorization).policy);
+    const rule = row.authorization === 'direct_policy' && typeof policy.id === 'number' ? tr(`（ルール #${policy.id}）`, ` (rule #${policy.id})`) : '';
+    return `${AUTHORIZATION_LABELS[row.authorization]}${rule}`;
+}
+
+const restored = (row: AiAuditLog) => asRecord(row.request_summary).restored_from === 'backend_log' || asRecord(row.request_summary.http).restored_from === 'backend_log';
 const newestFirst = (rows: AiAuditLog[]) => [...rows].sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id - a.id);
 async function loadFirstPage() {
     const items = await getAiAuditLogs({ limit: PAGE_SIZE, offset: 0 });
@@ -47,13 +70,17 @@ function AuditForClient() {
                 <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
                     <table className="w-full text-left text-sm" aria-busy={loading || loadingMore}>
                         <caption className="sr-only">{tr('監査ログ（新しい順）', 'Audit log (newest first)')}</caption>
-                        <thead className="border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)]"><tr>{[tr('日時', 'Time'), tr('操作', 'Operation'), tr('実行元', 'Source'), tr('結果', 'Result')].map((label) => <th scope="col" key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead>
+                        <thead className="border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)]"><tr>{[tr('日時', 'Time'), tr('操作', 'Operation'), tr('実行元', 'Source'), tr('許可の根拠', 'Authorized by'), tr('結果', 'Result')].map((label) => <th scope="col" key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead>
                         <tbody className="divide-y divide-[var(--studio-border)]">
                             {data.items.map((row) => <tr key={row.id}>
-                                <td className="whitespace-nowrap px-5 py-3 text-xs"><time dateTime={row.created_at}>{formatDateTime(row.created_at, timezone)}</time></td>
-                                <th scope="row" className="px-5 py-3 font-medium">{row.resource}{tr('・', ' · ')}{row.action}</th>
+                                <td className="whitespace-nowrap px-5 py-3 text-xs"><time dateTime={row.created_at}>{formatDateTime(row.created_at, timezone)}</time>{restored(row) && <span className="mt-1 block text-[var(--studio-text-muted)]">{tr('ログから復元', 'Restored from the log')}</span>}</td>
+                                <th scope="row" className="px-5 py-3 font-medium">{row.resource}{tr('・', ' · ')}{row.action}
+                                    {requestLine(row) && <span className="mt-1 block break-all text-xs font-normal text-[var(--studio-text-muted)]">{requestLine(row)}</span>}
+                                    {changedTables(row) && <span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{tr(`変更：${changedTables(row)}`, `Changed: ${changedTables(row)}`)}</span>}
+                                </th>
                                 <td className="px-5 py-3">{SOURCE_LABELS[row.source]}{row.tool_name && <span className="mt-1 block text-xs text-[var(--studio-text-muted)]">{row.tool_name}</span>}</td>
-                                <td className={`whitespace-nowrap px-5 py-3 ${row.decision === 'failed' || row.decision === 'denied' ? 'text-[var(--studio-danger)]' : ''}`}>{DECISION_LABELS[row.decision]}</td>
+                                <td className="px-5 py-3 text-xs">{authorizationText(row)}</td>
+                                <td className={`whitespace-nowrap px-5 py-3 ${row.decision === 'failed' || row.decision === 'denied' ? 'text-[var(--studio-danger)]' : ''}`}>{DECISION_LABELS[row.decision]}{row.http_status != null && <span className="mt-1 block text-xs text-[var(--studio-text-muted)]">HTTP {row.http_status}</span>}</td>
                             </tr>)}
                         </tbody>
                     </table>

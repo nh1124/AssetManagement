@@ -133,10 +133,6 @@ export function registerUiOperationTools(server: McpServer): void {
   // Automatic recordings waiting for the user (家計簿 › 自動取引の未反映)
   register(server, "transaction_proposals_list", "List pending recordings", "Recordings waiting to be posted or rejected.", { status: z.string().optional(), origin: z.string().optional() }, "read",
     (input) => api.get<unknown>(`/transactions/proposals${query(input)}`));
-  register(server, "transaction_proposals_approve", "Post a pending recording", "Posts a pending recording as a transaction.", { id }, "write",
-    ({ id: proposalId }) => api.post<unknown>(`/transactions/proposals/${proposalId}/approve`, {}));
-  register(server, "transaction_proposals_reject", "Reject a pending recording", "Rejects a pending recording.", { id, note: z.string().nullable().optional() }, "write",
-    ({ id: proposalId, note }) => api.post<unknown>(`/transactions/proposals/${proposalId}/reject`, only({ note })));
 
   // Notifications, data health, reconciliation
   register(server, "notifications_list", "List notifications", "The notifications shown in the inbox.", {}, "read", () => api.get<unknown>("/notifications"));

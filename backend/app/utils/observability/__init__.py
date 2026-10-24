@@ -11,7 +11,7 @@ Every line carries the request context (context.RequestContext), so the rows a
 request changed can be found from its request id and the reverse.
 """
 from .context import RequestContext, bind, current, reset
-from .db_audit import install_db_audit
+from .db_audit import install_db_audit, start_collecting, stop_collecting
 from .logging_setup import log_event, setup_logging
 from .middleware import RequestLogMiddleware
 from .operation import operation
@@ -28,4 +28,6 @@ __all__ = [
     "operation",
     "reset",
     "setup_logging",
+    "start_collecting",
+    "stop_collecting",
 ]

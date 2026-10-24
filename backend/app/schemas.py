@@ -18,6 +18,10 @@ AiOperationRiskLiteral = Literal["low", "medium", "high", "critical"]
 AiOperationModeLiteral = Literal["deny", "allow_read", "require_approval", "allow_execute"]
 AiOperationDecisionLiteral = Literal["allowed", "denied", "approval_required", "applied", "failed"]
 AiOperationSourceLiteral = Literal["frontend", "mcp_http", "mcp_stdio", "backend"]
+AiAuthorizationLiteral = Literal[
+    "read", "direct_policy", "direct_mode", "change_request", "human_approved",
+    "refused_scope", "refused_policy", "refused_mode", "failed",
+]
 AiChangeRequestStatusLiteral = Literal["draft", "pending", "approved", "applied", "rejected", "expired", "failed"]
 AiDataClassificationLiteral = Literal["normal", "sensitive", "secret"]
 AiMcpWriteModeLiteral = Literal["direct_write", "change_request"]
@@ -109,6 +113,10 @@ class AiAuditLog(BaseModel):
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
     created_at: datetime
+    authorization: Optional[AiAuthorizationLiteral] = None
+    http_status: Optional[int] = None
+    request_id: Optional[str] = None
+    correlation_id: Optional[str] = None
 
     class Config:
         from_attributes = True
