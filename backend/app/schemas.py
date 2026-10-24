@@ -137,7 +137,6 @@ class AiAuditLog(BaseModel):
 
 class AiExecutionSettings(BaseModel):
     mcp_write_mode: AiMcpWriteModeLiteral = "direct_write"
-    supported_change_request_operations: list[str] = Field(default_factory=list)
 
 
 class McpConnection(BaseModel):

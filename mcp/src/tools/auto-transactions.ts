@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { api } from "../api-client.js";
 import { toStructured } from "../utils.js";
-import { changeRequestUnsupportedResult, createChangeRequestResult, directWriteMessage, shouldCreateChangeRequest } from "../write-control.js";
+import { writeOrRequestChange } from "../write-control.js";
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const inputSchema = z.object({
@@ -44,9 +44,8 @@ export function registerAutoTransactionTools(server: McpServer): void {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (input) => {
     try {
-      if (await shouldCreateChangeRequest()) return await createChangeRequestResult({ resource: "auto_transactions", action: "create", input_payload: input });
-      const data = await api.post<unknown>("/auto-transactions/", input);
-      return { content: [{ type: "text", text: directWriteMessage("Created automatic transaction", data) }], structuredContent: toStructured(data) };
+      return await writeOrRequestChange("Created automatic transaction", () => api.post<unknown>("/auto-transactions/", input),
+        { resource: "auto_transactions", action: "create", input_payload: input });
     } catch (error) { return { isError: true, content: [{ type: "text", text: String(error) }] }; }
   });
   server.registerTool("auto_transactions_update", {
@@ -55,9 +54,8 @@ export function registerAutoTransactionTools(server: McpServer): void {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async ({ id, ...input }) => {
     try {
-      if (await shouldCreateChangeRequest()) return await createChangeRequestResult({ resource: "auto_transactions", action: "update", target_ref: { id }, input_payload: input });
-      const data = await api.put<unknown>(`/auto-transactions/${id}`, input);
-      return { content: [{ type: "text", text: directWriteMessage("Updated automatic transaction", data) }], structuredContent: toStructured(data) };
+      return await writeOrRequestChange("Updated automatic transaction", () => api.put<unknown>(`/auto-transactions/${id}`, input),
+        { resource: "auto_transactions", action: "update", target_ref: { id }, input_payload: input });
     } catch (error) { return { isError: true, content: [{ type: "text", text: String(error) }] }; }
   });
   server.registerTool("auto_transactions_delete", {
@@ -66,7 +64,6 @@ export function registerAutoTransactionTools(server: McpServer): void {
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, async ({ id }) => {
     try {
-      if (await shouldCreateChangeRequest()) return changeRequestUnsupportedResult("auto_transactions:delete");
       await api.delete<unknown>(`/auto-transactions/${id}`);
       return { content: [{ type: "text", text: `Deleted automatic transaction ${id}` }], structuredContent: { id } };
     } catch (error) { return { isError: true, content: [{ type: "text", text: String(error) }] }; }

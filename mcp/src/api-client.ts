@@ -94,49 +94,33 @@ function contextHeaders(context: McpRequestContext | undefined): Record<string, 
   } : {};
 }
 
-function methodOf(init: RequestInit): string {
-  return String(init.method ?? "GET").toUpperCase();
-}
+/** A backend error response. `refusal` is why the backend refused an AI operation (403 ai_operation_refused). */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly refusal: string | undefined;
 
-function isWriteRequest(path: string, init: RequestInit): boolean {
-  const method = methodOf(init);
-  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
-  if (path.startsWith("/auth/")) return false;
-  if (path.startsWith("/ai/change-requests")) return false;
-  if (path.startsWith("/ai/execution-settings")) return false;
-  if (path === "/ai/evaluate") return false;
-  if (path.includes("/preview")) return false;
-  return true;
-}
-
-async function enforceMcpWriteMode(path: string, init: RequestInit, token: string, context: McpRequestContext | undefined): Promise<void> {
-  if (!isWriteRequest(path, init)) return;
-  const res = await fetch(`${BACKEND_URL}/ai/execution-settings`, {
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...contextHeaders(context),
-    },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(
-      `Cannot verify MCP write mode; refusing ${methodOf(init)} ${path} (${res.status}): ${body}`,
-    );
-  }
-  const settings = await res.json() as { mcp_write_mode?: string };
-  if (settings.mcp_write_mode === "change_request") {
-    throw new Error(
-      "Change request mode is enabled in Settings. This MCP write tool is not applying a direct write. " +
-      "Use an approval-buffer-backed operation or create an AI change request and review it in Approval Inbox.",
-    );
+  constructor(status: number, message: string, body: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.refusal = refusalOf(body);
   }
 }
 
+function refusalOf(body: string): string | undefined {
+  try {
+    const detail = (JSON.parse(body) as { detail?: { error?: unknown; reason?: unknown } }).detail;
+    return detail?.error === "ai_operation_refused" && typeof detail.reason === "string" ? detail.reason : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Writes go straight to the backend, which decides by the write mode and the operation's
+// permission and records every refusal (WP36); there is no write-mode check here.
 async function request<T>(path: string, init: RequestInit = {}, authRetried = false): Promise<T> {
   const token = await getToken();
   const context = requestContext.getStore();
-  await enforceMcpWriteMode(path, init, token, context);
   const res = await fetch(`${BACKEND_URL}${path}`, {
     ...init,
     headers: {
@@ -149,7 +133,7 @@ async function request<T>(path: string, init: RequestInit = {}, authRetried = fa
   if (res.status === 401) {
     const body = await res.text();
     if (authRetried) {
-      throw new Error(`API ${init.method ?? "GET"} ${path} -> 401 after one authentication retry: ${body}`);
+      throw new ApiError(401, `API ${init.method ?? "GET"} ${path} -> 401 after one authentication retry: ${body}`, body);
     }
     if (context) {
       mcpTokenCache.delete(context.mcpAccessToken);
@@ -160,7 +144,7 @@ async function request<T>(path: string, init: RequestInit = {}, authRetried = fa
   }
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`API ${init.method ?? "GET"} ${path} -> ${res.status}: ${body}`);
+    throw new ApiError(res.status, `API ${init.method ?? "GET"} ${path} -> ${res.status}: ${body}`, body);
   }
   const text = await res.text();
   return text ? JSON.parse(text) as T : undefined as T;

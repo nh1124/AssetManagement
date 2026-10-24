@@ -193,10 +193,13 @@ def test_reads_are_audited(gateway):
     assert row.diff_summary == {}
 
 
-def test_the_write_mode_check_of_the_mcp_server_is_not_an_operation(gateway):
+def test_the_mcp_server_does_not_read_the_write_mode_any_more(gateway):
+    # WP36: the backend refuses and records; reading the settings is not an operation the AI has.
     http, db, client, _ = gateway
-    assert http.get("/ai/execution-settings", headers=_mcp_bearer(client)).status_code == 200
-    assert _rows(db) == []
+    response = http.get("/ai/execution-settings", headers=_mcp_bearer(client))
+    assert response.status_code == 403 and response.json()["detail"]["reason"] == "operation_unknown"
+    (row,) = _rows(db)
+    assert (row.authorization, row.decision, row.http_status) == ("refused_scope", "denied", 403)
 
 
 def test_an_endpoint_that_audits_itself_gets_its_row_completed_not_doubled(gateway):

@@ -4,14 +4,12 @@ process.env.BACKEND_URL = "http://backend.test";
 process.env.BACKEND_USERNAME = "test-user";
 process.env.BACKEND_PASSWORD = "test-password";
 
-// Every backend call answers with `backendReply` (undefined: 204 No Content).
-// Sign-in and the write-mode check answer as a direct-write client.
+// Every backend call answers with `backendReply` (undefined: 204 No Content); sign-in answers with a token.
 let backendReply: unknown = [];
 const requested: string[] = [];
 globalThis.fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
   const url = String(input);
   if (url.endsWith("/auth/login")) return Response.json({ access_token: "token" });
-  if (url.endsWith("/ai/execution-settings")) return Response.json({ mcp_write_mode: "direct_write" });
   requested.push(`${init?.method ?? "GET"} ${url}`);
   return backendReply === undefined ? new Response(null, { status: 204 }) : Response.json(backendReply);
 };

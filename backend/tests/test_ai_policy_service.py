@@ -113,14 +113,14 @@ def test_the_list_covers_every_operation_by_section() -> None:
     ("change_request", None, "POST", "/ai/change-requests", None),
     ("change_request", None, "GET", "/accounts/", None),
     ("direct_write", None, "GET", "/no-such-feature", "operation_unknown"),
-    ("direct_write", None, "GET", "/ai/execution-settings", None),
+    ("direct_write", None, "GET", "/ai/execution-settings", "operation_unknown"),
 ])
 def test_the_gateway_decides_by_the_operation(write_mode, saved, method, path, refusal) -> None:
     db = _session()
     try:
         client = _client(db, {"ai_operation": {"mcp_write_mode": write_mode}})
         if saved:
-            set_operation_mode(db, client.id, catalog.match(method, path)[1].key, saved, None)
+            set_operation_mode(db, client.id, catalog.match(method, path).key, saved, None)
         assert mcp_refusal(db, client.id, method, path) == refusal
     finally:
         db.close()
@@ -171,8 +171,6 @@ def test_execution_settings_are_stored_in_general_settings() -> None:
         assert saved["mcp_write_mode"] == "change_request"
         assert listed["mcp_write_mode"] == "change_request"
         assert client.general_settings["ai_operation"]["mcp_write_mode"] == "change_request"
-        assert listed["supported_change_request_operations"] == [
-            "transactions.create", "plan_lines.update", "auto_transactions.create", "auto_transactions.update",
-        ]
+        assert listed == {"mcp_write_mode": "change_request"}
     finally:
         db.close()

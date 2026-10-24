@@ -99,8 +99,6 @@ def test_every_listed_route_exists_in_the_backend():
                 assert any(m == method and (p == prefix or p.startswith(prefix + "/")) for m, p in routes), spec
             else:
                 assert (method, "/" + path.strip("/")) in routes, f"{operation.key}: {spec}"
-    for spec in catalog.PLUMBING:
-        assert tuple(spec.split(" ", 1)) in routes, spec
 
 
 def test_operations_are_unique_and_well_formed():
@@ -126,14 +124,15 @@ def test_operations_are_unique_and_well_formed():
     ("DELETE", "/exchange-rates/tracked/USD", "fx_tracked.delete"),
 ])
 def test_the_most_specific_route_wins(method, path, key):
-    known, operation = catalog.match(method, path)
-    assert known and operation.key == key
+    operation = catalog.match(method, path)
+    assert operation is not None and operation.key == key
 
 
-def test_unknown_and_plumbing_requests():
-    assert catalog.match("GET", "/ai/execution-settings") == (True, None)
-    assert catalog.match("POST", "/ai/evaluate") == (False, None)
-    assert catalog.match("DELETE", "/accounts/") == (False, None)
+def test_requests_outside_the_list():
+    # The MCP server no longer reads the write mode (WP36): the backend decides and records.
+    assert catalog.match("GET", "/ai/execution-settings") is None
+    assert catalog.match("POST", "/ai/evaluate") is None
+    assert catalog.match("DELETE", "/accounts/") is None
 
 
 # ─── the migration keeps what took effect ───────────────────────────────────

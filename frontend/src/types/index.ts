@@ -166,7 +166,6 @@ export type AiAuthorization =
 
 export interface AiExecutionSettings {
     mcp_write_mode: AiMcpWriteMode;
-    supported_change_request_operations: string[];
 }
 
 /** An AI app the person connected over MCP (WP35). */

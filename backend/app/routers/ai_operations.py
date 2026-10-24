@@ -7,7 +7,6 @@ from .. import models, schemas
 from ..config import settings
 from ..database import get_db
 from ..dependencies import get_current_client, mcp_client_id as request_mcp_client_id, request_language
-from ..domain import ai_operations
 from ..domain.errors import DomainError, NotFound, Refused, detail_for, status_for
 from ..services import mcp_connection_service
 from ..utils.jwt import token_is_current
@@ -29,15 +28,8 @@ from ..services.client_settings_service import merge_ai_execution_settings
 
 router = APIRouter(prefix="/ai", tags=["ai-operations"])
 
-# The operations a change request can carry (domain/ai_operations); the MCP server reads the list.
-SUPPORTED_CHANGE_REQUEST_OPERATIONS = [operation.key for operation in ai_operations.OPERATIONS if operation.approval]
-
-
 def _execution_settings_payload(current_client: models.Client) -> dict:
-    return {
-        "mcp_write_mode": mcp_write_mode_of(current_client.general_settings),
-        "supported_change_request_operations": SUPPORTED_CHANGE_REQUEST_OPERATIONS,
-    }
+    return {"mcp_write_mode": mcp_write_mode_of(current_client.general_settings)}
 
 
 @router.get("/operations", response_model=schemas.AiOperations)

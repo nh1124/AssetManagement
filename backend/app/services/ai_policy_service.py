@@ -256,8 +256,11 @@ REFUSAL_MESSAGES = {
                        "承認・却下は人が行います。アプリで操作してください。"),
     "account": ("Account operations are not available through MCP.",
                 "アカウントの操作は MCP からはできません。"),
-    "change_request_mode": ("Writes go through change requests in this client's settings; create an AI change request instead.",
-                            "この設定では書き込みは承認リクエスト経由です。承認リクエストを作成してください。"),
+    "change_request_mode": ("In this client's settings the AI writes only through change requests a person approves: "
+                            "for recording a transaction, updating a plan line, or creating or updating an automatic "
+                            "transaction, create an AI change request; other writes are not available.",
+                            "この設定では、AI の書き込みは人が承認する承認リクエスト経由だけです。取引の記録・計画の行の変更・"
+                            "自動取引の作成と変更は承認リクエストを作ってください。ほかの書き込みは使えません。"),
 }
 
 # Last path segments that name what a request does rather than what it acts on.
@@ -302,10 +305,7 @@ def mcp_write_mode_of(general_settings: dict | None) -> str:
 
 def mcp_request_is_operation(method: str, path: str) -> bool:
     """False for MCP requests that are plumbing, not something the AI did."""
-    if path.startswith("/health") or path.startswith("/auth/mcp/exchange"):
-        return False
-    # The MCP server asks for the write mode before every write it forwards.
-    return not (method == "GET" and path.rstrip("/") == "/ai/execution-settings")
+    return not (path.startswith("/health") or path.startswith("/auth/mcp/exchange"))
 
 
 def mcp_refusal(db: Session, client_id: int, method: str, path: str) -> str | None:
@@ -319,11 +319,9 @@ def mcp_refusal(db: Session, client_id: int, method: str, path: str) -> str | No
     for refused_method, pattern, reason in _MCP_REFUSALS:
         if (refused_method is None or refused_method == method) and pattern.match(path):
             return reason
-    known, operation = ai_operations.match(method, path)
-    if not known:
-        return "operation_unknown"
+    operation = ai_operations.match(method, path)
     if operation is None:
-        return None
+        return "operation_unknown"
     mode = operation_mode(db, client_id, operation.key)
     if mode == "deny":
         return "operation_denied"
@@ -456,7 +454,7 @@ def record_mcp_operation(db: Session, client_id: int, facts: McpRequestFacts) ->
     read) gets that row completed rather than a second one: one operation, one row.
     """
     resource, action, risk, target = describe_mcp_request(facts.method, facts.path)
-    _, operation = ai_operations.match(facts.method, facts.path)
+    operation = ai_operations.match(facts.method, facts.path)
     if operation is not None:
         resource, action, risk = operation.resource, operation.action, operation.risk
     own_rows = [change.get("pk") for change in facts.changes

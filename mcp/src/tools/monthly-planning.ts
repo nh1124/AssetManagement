@@ -8,10 +8,9 @@ import { api } from "../api-client.js";
 import { fetchAccounts } from "../domain-guidance.js";
 import { toStructured } from "../utils.js";
 import {
-  changeRequestUnsupportedResult,
   createChangeRequestResult,
   directWriteMessage,
-  shouldCreateChangeRequest,
+  needsChangeRequest,
 } from "../write-control.js";
 
 const periodSchema = z.string().regex(/^\d{4}-\d{2}$/);
@@ -159,31 +158,36 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
         const updates = lines
           .filter((line) => "id" in line && line.id !== undefined)
           .map((line) => toMonthlyPlanLineUpdatePayload(line));
-        if (await shouldCreateChangeRequest()) {
-          if (creates.length > 0) {
-            return changeRequestUnsupportedResult("monthly_plan_lines:create");
-          }
-          const requests = [];
-          for (const update of updates) {
-            requests.push(await createChangeRequestResult({
-              resource: "monthly_plan_lines",
-              action: "update",
-              target_ref: { id: update.id },
-              input_payload: update,
-            }));
-          }
-          const text = requests.map((request) => request.content[0]?.text ?? "").join("\n\n");
-          return {
-            content: [{ type: "text", text }],
-            structuredContent: toStructured({ change_requests_created: requests.length }),
-          };
-        }
+        // Creating lines has no approval path: a refusal stops the tool before any update.
         const created = creates.length > 0
           ? await api.post<unknown>("/budget-plans/lines", creates)
           : null;
-        const updated = updates.length > 0
-          ? await api.put<unknown>("/budget-plans/lines/batch", updates)
-          : null;
+        let updated: unknown = null;
+        if (updates.length > 0) {
+          try {
+            updated = await api.put<unknown>("/budget-plans/lines/batch", updates);
+          } catch (error) {
+            if (!needsChangeRequest(error)) throw error;
+            // The backend wants approval for updates: one change request per line.
+            const requests = [];
+            for (const update of updates) {
+              requests.push(await createChangeRequestResult({
+                resource: "monthly_plan_lines",
+                action: "update",
+                target_ref: { id: update.id },
+                input_payload: update,
+              }));
+            }
+            const text = [
+              ...(created ? [directWriteMessage("Created monthly plan lines", created)] : []),
+              ...requests.map((request) => request.content[0]?.text ?? ""),
+            ].join("\n\n");
+            return {
+              content: [{ type: "text", text }],
+              structuredContent: toStructured({ created, change_requests_created: requests.length }),
+            };
+          }
+        }
         const data = { created, updated };
         return {
           content: [{ type: "text", text: directWriteMessage("Saved monthly plan lines", data) }],
@@ -263,9 +267,6 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
     },
     async ({ id }) => {
       try {
-        if (await shouldCreateChangeRequest()) {
-          return changeRequestUnsupportedResult("monthly_plan_lines:delete");
-        }
         const data = await api.delete<unknown>(`/budget-plans/lines/${id}`);
         return {
           content: [{ type: "text", text: directWriteMessage(`Deleted monthly plan line ${id}`, data) }],

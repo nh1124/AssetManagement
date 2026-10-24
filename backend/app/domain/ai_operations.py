@@ -286,9 +286,6 @@ LOCAL_TOOLS: tuple[str, ...] = (
     "calc_future_value", "calc_future_value_multi", "calc_project_all", "calc_dc_tax_saving", "calc_nisa_cap_usage",
 )
 
-# What the MCP server itself asks before a write; not something the AI does.
-PLUMBING: tuple[str, ...] = ("GET /ai/execution-settings",)
-
 BY_KEY: dict[str, AiOperation] = {operation.key: operation for operation in OPERATIONS}
 
 
@@ -298,7 +295,7 @@ class _Route:
     pattern: re.Pattern
     literals: int
     prefix: bool
-    operation: AiOperation | None
+    operation: AiOperation
 
 
 def _normalize(path: str) -> str:
@@ -318,11 +315,11 @@ def _compile(spec: str, operation: AiOperation | None) -> _Route:
 
 _ROUTES: tuple[_Route, ...] = tuple(
     _compile(spec, operation) for operation in OPERATIONS for spec in operation.routes
-) + tuple(_compile(spec, None) for spec in PLUMBING)
+)
 
 
-def match(method: str, path: str) -> tuple[bool, AiOperation | None]:
-    """(known, operation) for one request. Plumbing is known with no operation.
+def match(method: str, path: str) -> AiOperation | None:
+    """The operation one request performs, or None for a request outside the list.
 
     The most specific route wins: an exact route over a prefix (`/**`), then the one
     with more literal segments, so GET /analysis/reconcile/3 is a reconciliation read,
@@ -331,6 +328,5 @@ def match(method: str, path: str) -> tuple[bool, AiOperation | None]:
     path = _normalize(path)
     candidates = [route for route in _ROUTES if route.method == method.upper() and route.pattern.match(path)]
     if not candidates:
-        return False, None
-    best = max(candidates, key=lambda route: (not route.prefix, route.literals))
-    return True, best.operation
+        return None
+    return max(candidates, key=lambda route: (not route.prefix, route.literals)).operation
